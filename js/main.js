@@ -245,6 +245,11 @@ function isExternalSubtitleTrackId(trackId) {
     return typeof trackId === 'string' && trackId.indexOf('subtitle-ext-') === 0;
 }
 
+function isEnglishTrackInfo(language, label) {
+    var normalized = ((language || '') + ' ' + (label || '')).toLowerCase();
+    return /\b(en|eng|english|en-us|en-gb)\b/.test(normalized);
+}
+
 function requestText(url) {
     return new Promise(function(resolve, reject) {
         var xhr = new XMLHttpRequest();
@@ -375,7 +380,12 @@ function getExternalSubtitleTracks(stream) {
 
     return subtitles.map(function(track, index) {
         var url = track.url || track.src || track.file;
+        var language = track.lang || track.language || '';
+        var label = track.label || track.name || track.lang || '';
         if (!url) {
+            return null;
+        }
+        if (!isEnglishTrackInfo(language, label)) {
             return null;
         }
         return {
@@ -384,8 +394,8 @@ function getExternalSubtitleTracks(stream) {
             kind: 'external',
             url: url,
             label: normalizeTrackLabel('subtitle', {
-                language: track.lang || track.language,
-                label: track.label || track.name || track.lang
+                language: language,
+                label: label
             }, index)
         };
     }).filter(Boolean);
@@ -409,6 +419,36 @@ function getAllSubtitleTracks() {
     return state.subtitleTracks.concat(state.externalSubtitleTracks);
 }
 
+function getPreferredSubtitleTracks() {
+    var englishEmbedded;
+
+    if (state.externalSubtitleTracks.length) {
+        return state.externalSubtitleTracks.slice();
+    }
+
+    englishEmbedded = state.subtitleTracks.filter(function(track) {
+        return isEnglishTrackInfo(track.language, track.label);
+    });
+
+    return englishEmbedded;
+}
+
+function applyPreferredSubtitleSelection() {
+    var preferredTracks = getPreferredSubtitleTracks();
+
+    if (!preferredTracks.length) {
+        return;
+    }
+
+    if (preferredTracks.some(function(track) {
+        return track.id === state.activeSubtitleTrack;
+    })) {
+        return;
+    }
+
+    selectSubtitleTrack(preferredTracks[0].id);
+}
+
 function cycleAudioTrack() {
     var nextIndex;
 
@@ -425,7 +465,7 @@ function cycleAudioTrack() {
 }
 
 function cycleSubtitleTrack() {
-    var tracks = [{ id: 'subtitle-off', label: 'Off' }].concat(getAllSubtitleTracks());
+    var tracks = [{ id: 'subtitle-off', label: 'Off' }].concat(getPreferredSubtitleTracks());
     var nextIndex = tracks.findIndex(function(track) {
         return track.id === state.activeSubtitleTrack;
     });
@@ -451,7 +491,7 @@ function setPlayerFullscreenUi() {
 
 function updateTrackBadges() {
     byId('playerAudioBadge').textContent = state.audioTracks.length ? String(state.audioTracks.length) : '1';
-    byId('playerSubtitleBadge').textContent = getAllSubtitleTracks().length ? String(getAllSubtitleTracks().length) : 'Off';
+    byId('playerSubtitleBadge').textContent = getPreferredSubtitleTracks().length ? String(getPreferredSubtitleTracks().length) : 'Off';
 }
 
 function formatPlaybackTime(ms) {
@@ -736,18 +776,19 @@ function renderTrackChips(containerId, tracks, activeId, onSelect) {
 function renderTrackSelectors() {
     var hasPlayableSelection = !!(state.currentStream && state.currentStream.playable);
     var audioTracks = state.audioTracks.slice();
+    var preferredSubtitleTracks = getPreferredSubtitleTracks();
     var subtitleTracks = hasPlayableSelection
         ? [{
             id: 'subtitle-off',
             label: 'Off'
-        }].concat(getAllSubtitleTracks())
+        }].concat(preferredSubtitleTracks)
         : [];
 
     byId('audioTrackCount').textContent = audioTracks.length
         ? String(audioTracks.length) + ' option' + (audioTracks.length === 1 ? '' : 's')
         : 'Default only';
-    byId('subtitleTrackCount').textContent = getAllSubtitleTracks().length
-        ? String(getAllSubtitleTracks().length) + ' option' + (getAllSubtitleTracks().length === 1 ? '' : 's')
+    byId('subtitleTrackCount').textContent = preferredSubtitleTracks.length
+        ? String(preferredSubtitleTracks.length) + ' option' + (preferredSubtitleTracks.length === 1 ? '' : 's')
         : 'Off';
 
     renderTrackChips('audioTrackList', audioTracks, state.activeAudioTrack, selectAudioTrack);
@@ -781,12 +822,15 @@ function refreshHtml5Tracks() {
 
     if (textTracks && typeof textTracks.length === 'number') {
         for (index = 0; index < textTracks.length; index += 1) {
+            var textTrackLanguage = textTracks[index].language || '';
+            var textTrackLabel = textTracks[index].label || '';
             nextSubs.push({
                 id: 'subtitle-' + index,
                 index: index,
+                language: textTrackLanguage,
                 label: normalizeTrackLabel('subtitle', {
-                    language: textTracks[index].language,
-                    label: textTracks[index].label
+                    language: textTrackLanguage,
+                    label: textTrackLabel
                 }, index)
             });
             if (textTracks[index].mode && textTracks[index].mode !== 'disabled') {
@@ -846,6 +890,7 @@ function refreshAvplayTracks() {
             nextSubs.push({
                 id: trackId,
                 index: trackInfo.index,
+                language: info.language || info.lang || info.track_lang || info.subtitle_lang || '',
                 label: normalizeTrackLabel('subtitle', info, index)
             });
         }
@@ -882,10 +927,12 @@ function refreshPlaybackTracks() {
 
     if (state.playerMode === 'avplay') {
         refreshAvplayTracks();
+        applyPreferredSubtitleSelection();
         return;
     }
 
     refreshHtml5Tracks();
+    applyPreferredSubtitleSelection();
 }
 
 function scheduleTrackRefresh() {
@@ -934,7 +981,7 @@ function selectAudioTrack(trackId) {
 function selectSubtitleTrack(trackId) {
     var video = byId('videoPlayer');
     var textTracks = video.textTracks;
-    var selectedTrack = getAllSubtitleTracks().filter(function(track) {
+    var selectedTrack = getPreferredSubtitleTracks().filter(function(track) {
         return track.id === trackId;
     })[0];
     var index;
