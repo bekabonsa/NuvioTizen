@@ -1,0 +1,4 @@
+.buildResult/
+.sign/
+*.wgt
+.DS_Store
