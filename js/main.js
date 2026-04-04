@@ -48,6 +48,10 @@ var state = {
     selectedVideo: null,
     streams: [],
     currentStream: null,
+    audioTracks: [],
+    subtitleTracks: [],
+    activeAudioTrack: null,
+    activeSubtitleTrack: 'subtitle-off',
     playerMode: 'html5',
     playerFullscreen: false,
     currentView: 'home',
@@ -131,6 +135,55 @@ function updateUserPanel() {
         : 'Sign in to keep your Stremio session active inside this TV shell.';
 }
 
+function resetTrackState() {
+    state.audioTracks = [];
+    state.subtitleTracks = [];
+    state.activeAudioTrack = null;
+    state.activeSubtitleTrack = 'subtitle-off';
+}
+
+function safeJsonParse(value) {
+    if (!value) {
+        return null;
+    }
+    if (typeof value === 'object') {
+        return value;
+    }
+
+    try {
+        return JSON.parse(value);
+    } catch (error) {
+        return null;
+    }
+}
+
+function normalizeTrackLabel(type, info, index) {
+    var language = '';
+    var codec = '';
+    var label = '';
+
+    if (info) {
+        language = info.language || info.lang || info.track_lang || info.subtitle_lang || '';
+        codec = info.codec_fourcc || info.codec || '';
+        label = info.label || info.track_name || info.name || '';
+    }
+
+    if (label) {
+        return label;
+    }
+    if (language && codec) {
+        return String(language).toUpperCase() + ' • ' + codec;
+    }
+    if (language) {
+        return String(language).toUpperCase();
+    }
+    if (codec) {
+        return codec;
+    }
+
+    return (type === 'audio' ? 'Audio ' : 'Subtitle ') + (index + 1);
+}
+
 function hasAvplay() {
     return typeof webapis !== 'undefined' && webapis && webapis.avplay;
 }
@@ -189,6 +242,8 @@ function clearPlaybackSurface() {
     stopAvplayPlayback();
     stopHtml5Playback();
     state.playerMode = 'html5';
+    resetTrackState();
+    renderTrackSelectors();
 }
 
 function stopCurrentPlayback() {
@@ -196,11 +251,272 @@ function stopCurrentPlayback() {
     setPlayerStatus('Stopped');
 }
 
+function renderTrackChips(containerId, tracks, activeId, onSelect) {
+    var container = byId(containerId);
+    container.innerHTML = '';
+
+    tracks.forEach(function(track) {
+        var button = document.createElement('button');
+        button.className = 'track-chip';
+        button.type = 'button';
+        button.setAttribute('tabindex', '-1');
+        if (track.id === activeId) {
+            button.classList.add('is-selected');
+        }
+        button.textContent = track.label;
+        button.addEventListener('click', function() {
+            onSelect(track.id);
+        });
+        container.appendChild(button);
+    });
+}
+
+function renderTrackSelectors() {
+    var hasPlayableSelection = !!(state.currentStream && state.currentStream.playable);
+    var audioTracks = state.audioTracks.slice();
+    var subtitleTracks = hasPlayableSelection
+        ? [{
+            id: 'subtitle-off',
+            label: 'Off'
+        }].concat(state.subtitleTracks)
+        : [];
+
+    byId('audioTrackCount').textContent = audioTracks.length
+        ? String(audioTracks.length) + ' option' + (audioTracks.length === 1 ? '' : 's')
+        : 'Default only';
+    byId('subtitleTrackCount').textContent = state.subtitleTracks.length
+        ? String(state.subtitleTracks.length) + ' option' + (state.subtitleTracks.length === 1 ? '' : 's')
+        : 'Off';
+
+    renderTrackChips('audioTrackList', audioTracks, state.activeAudioTrack, selectAudioTrack);
+    renderTrackChips('subtitleTrackList', subtitleTracks, state.activeSubtitleTrack, selectSubtitleTrack);
+}
+
+function refreshHtml5Tracks() {
+    var video = byId('videoPlayer');
+    var nextAudio = [];
+    var nextSubs = [];
+    var audioTracks = video.audioTracks;
+    var textTracks = video.textTracks;
+    var index;
+
+    if (audioTracks && typeof audioTracks.length === 'number') {
+        for (index = 0; index < audioTracks.length; index += 1) {
+            nextAudio.push({
+                id: 'audio-' + index,
+                index: index,
+                label: normalizeTrackLabel('audio', {
+                    language: audioTracks[index].language,
+                    label: audioTracks[index].label
+                }, index)
+            });
+            if (audioTracks[index].enabled) {
+                state.activeAudioTrack = 'audio-' + index;
+            }
+        }
+    }
+
+    if (textTracks && typeof textTracks.length === 'number') {
+        for (index = 0; index < textTracks.length; index += 1) {
+            nextSubs.push({
+                id: 'subtitle-' + index,
+                index: index,
+                label: normalizeTrackLabel('subtitle', {
+                    language: textTracks[index].language,
+                    label: textTracks[index].label
+                }, index)
+            });
+            if (textTracks[index].mode && textTracks[index].mode !== 'disabled') {
+                state.activeSubtitleTrack = 'subtitle-' + index;
+            }
+        }
+    }
+
+    if (!nextAudio.length) {
+        state.activeAudioTrack = null;
+    } else if (!state.activeAudioTrack) {
+        state.activeAudioTrack = nextAudio[0].id;
+    }
+
+    if (!nextSubs.length) {
+        state.activeSubtitleTrack = 'subtitle-off';
+    }
+
+    state.audioTracks = nextAudio;
+    state.subtitleTracks = nextSubs;
+    renderTrackSelectors();
+}
+
+function refreshAvplayTracks() {
+    var totalTrackInfo;
+    var nextAudio = [];
+    var nextSubs = [];
+
+    if (!hasAvplay()) {
+        return;
+    }
+
+    try {
+        totalTrackInfo = webapis.avplay.getTotalTrackInfo() || [];
+    } catch (error) {
+        return;
+    }
+
+    totalTrackInfo.forEach(function(trackInfo, index) {
+        var info = safeJsonParse(trackInfo.extra_info) || {};
+        var trackId;
+
+        if (trackInfo.type === 'AUDIO') {
+            trackId = 'audio-' + trackInfo.index;
+            nextAudio.push({
+                id: trackId,
+                index: trackInfo.index,
+                label: normalizeTrackLabel('audio', info, index)
+            });
+            return;
+        }
+
+        if (trackInfo.type === 'TEXT') {
+            trackId = 'subtitle-' + trackInfo.index;
+            nextSubs.push({
+                id: trackId,
+                index: trackInfo.index,
+                label: normalizeTrackLabel('subtitle', info, index)
+            });
+        }
+    });
+
+    state.audioTracks = nextAudio;
+    state.subtitleTracks = nextSubs;
+
+    if (!state.activeAudioTrack && nextAudio.length) {
+        state.activeAudioTrack = nextAudio[0].id;
+    }
+    if (!nextSubs.length) {
+        state.activeSubtitleTrack = 'subtitle-off';
+    } else if (state.activeSubtitleTrack !== 'subtitle-off') {
+        var stillExists = nextSubs.some(function(track) {
+            return track.id === state.activeSubtitleTrack;
+        });
+        if (!stillExists) {
+            state.activeSubtitleTrack = 'subtitle-off';
+        }
+    }
+
+    renderTrackSelectors();
+}
+
+function refreshPlaybackTracks() {
+    if (!state.currentStream || !state.currentStream.playable) {
+        resetTrackState();
+        renderTrackSelectors();
+        return;
+    }
+
+    if (state.playerMode === 'avplay') {
+        refreshAvplayTracks();
+        return;
+    }
+
+    refreshHtml5Tracks();
+}
+
+function scheduleTrackRefresh() {
+    [120, 450, 1200].forEach(function(delay) {
+        setTimeout(refreshPlaybackTracks, delay);
+    });
+}
+
+function selectAudioTrack(trackId) {
+    var video = byId('videoPlayer');
+    var audioTracks = video.audioTracks;
+    var selectedTrack = state.audioTracks.filter(function(track) {
+        return track.id === trackId;
+    })[0];
+    var index;
+
+    if (!selectedTrack) {
+        return;
+    }
+
+    if (state.playerMode === 'avplay' && hasAvplay()) {
+        try {
+            webapis.avplay.setSelectTrack('AUDIO', selectedTrack.index);
+            state.activeAudioTrack = trackId;
+            renderTrackSelectors();
+            setPlayerStatus('Audio: ' + selectedTrack.label);
+        } catch (error) {
+            setPlayerStatus('Audio switch failed');
+        }
+        return;
+    }
+
+    if (audioTracks && typeof audioTracks.length === 'number') {
+        for (index = 0; index < audioTracks.length; index += 1) {
+            audioTracks[index].enabled = index === selectedTrack.index;
+        }
+    }
+
+    state.activeAudioTrack = trackId;
+    renderTrackSelectors();
+    setPlayerStatus('Audio: ' + selectedTrack.label);
+}
+
+function selectSubtitleTrack(trackId) {
+    var video = byId('videoPlayer');
+    var textTracks = video.textTracks;
+    var selectedTrack = state.subtitleTracks.filter(function(track) {
+        return track.id === trackId;
+    })[0];
+    var index;
+
+    if (state.playerMode === 'avplay' && hasAvplay()) {
+        try {
+            if (trackId === 'subtitle-off') {
+                webapis.avplay.setSilentSubtitle(true);
+                state.activeSubtitleTrack = 'subtitle-off';
+                renderTrackSelectors();
+                setPlayerStatus('Subtitles off');
+                return;
+            }
+
+            webapis.avplay.setSilentSubtitle(false);
+            webapis.avplay.setSelectTrack('TEXT', selectedTrack.index);
+            state.activeSubtitleTrack = trackId;
+            renderTrackSelectors();
+            setPlayerStatus('Subtitles: ' + selectedTrack.label);
+        } catch (error) {
+            setPlayerStatus('Subtitle switch failed');
+        }
+        return;
+    }
+
+    if (textTracks && typeof textTracks.length === 'number') {
+        for (index = 0; index < textTracks.length; index += 1) {
+            textTracks[index].mode = 'disabled';
+        }
+
+        if (selectedTrack) {
+            textTracks[selectedTrack.index].mode = 'showing';
+        }
+    }
+
+    state.activeSubtitleTrack = trackId;
+    renderTrackSelectors();
+    setPlayerStatus(trackId === 'subtitle-off' ? 'Subtitles off' : 'Subtitles: ' + selectedTrack.label);
+}
+
 function setPlayerFullscreen(enabled) {
     var body = document.body;
     state.playerFullscreen = !!enabled;
     body.classList.toggle('is-player-fullscreen', state.playerFullscreen);
     byId('playerFullscreenButton').textContent = state.playerFullscreen ? 'Windowed' : 'Fullscreen';
+    if (state.playerFullscreen) {
+        state.focusRegion = 'main';
+        state.mainRow = 0;
+        state.mainCol = 0;
+        setTimeout(focusCurrent, 0);
+    }
     setTimeout(syncAvplayRect, 60);
 }
 
@@ -278,8 +594,26 @@ function getMainRows() {
     }
 
     if (state.currentView === 'player') {
+        var playerRows = [];
         var playerActions = queryAll('#playerActions .action-button');
-        return playerActions.length ? [playerActions] : [];
+        var audioButtons = queryAll('#audioTrackList .track-chip');
+        var subtitleButtons = queryAll('#subtitleTrackList .track-chip');
+
+        if (state.playerFullscreen) {
+            return [[byId('videoFrameFocus')]];
+        }
+
+        if (playerActions.length) {
+            playerRows.push(playerActions);
+        }
+        if (audioButtons.length) {
+            playerRows.push(audioButtons);
+        }
+        if (subtitleButtons.length) {
+            playerRows.push(subtitleButtons);
+        }
+
+        return playerRows.length ? playerRows : [[byId('videoFrameFocus')]];
     }
 
     return [
@@ -878,6 +1212,7 @@ function renderPlayerState() {
         byId('playerDescription').textContent =
             'This player page is for direct stream URLs. Some addon entries may still require a proxy or native playback layer.';
         clearPlaybackSurface();
+        renderTrackSelectors();
         return;
     }
 
@@ -892,11 +1227,13 @@ function renderPlayerState() {
         empty.textContent = 'This stream is not directly playable in the web shell. It likely needs a proxy or native playback pipeline.';
         clearPlaybackSurface();
         setPlayerStatus(stream.status);
+        renderTrackSelectors();
         return;
     }
 
     empty.classList.add('is-hidden');
     video.classList.remove('is-hidden');
+    renderTrackSelectors();
 }
 
 function startHtml5Stream(url) {
@@ -918,6 +1255,7 @@ function startHtml5Stream(url) {
     if (playPromise && typeof playPromise.then === 'function') {
         playPromise.then(function() {
             setPlayerStatus('Playing (HTML5)');
+            scheduleTrackRefresh();
         }).catch(function(error) {
             setPlayerStatus('Play blocked: ' + error.message);
         });
@@ -956,6 +1294,7 @@ function startAvplayStream(url) {
             },
             onbufferingcomplete: function() {
                 setPlayerStatus('Ready (AVPlay)');
+                refreshPlaybackTracks();
             },
             onstreamcompleted: function() {
                 setPlayerStatus('Finished');
@@ -973,6 +1312,7 @@ function startAvplayStream(url) {
             try {
                 webapis.avplay.play();
                 setPlayerStatus('Playing (AVPlay)');
+                scheduleTrackRefresh();
             } catch (playError) {
                 setPlayerStatus('AVPlay play failed');
                 startHtml5Stream(url);
@@ -987,11 +1327,53 @@ function startAvplayStream(url) {
     }
 }
 
+function toggleCurrentPlayback() {
+    var video = byId('videoPlayer');
+
+    if (!state.currentStream || !state.currentStream.playable || !state.currentStream.raw || !state.currentStream.raw.url) {
+        setPlayerStatus('No playable stream selected');
+        return;
+    }
+
+    if (state.playerMode === 'avplay' && hasAvplay()) {
+        try {
+            if (byId('playerToggleButton').textContent === 'Play') {
+                webapis.avplay.play();
+                byId('playerToggleButton').textContent = 'Pause';
+                setPlayerStatus('Playing (AVPlay)');
+            } else {
+                webapis.avplay.pause();
+                byId('playerToggleButton').textContent = 'Play';
+                setPlayerStatus('Paused (AVPlay)');
+            }
+        } catch (error) {
+            setPlayerStatus('AVPlay toggle failed');
+        }
+        return;
+    }
+
+    if (video.paused) {
+        video.play().then(function() {
+            byId('playerToggleButton').textContent = 'Pause';
+            setPlayerStatus('Playing (HTML5)');
+        }).catch(function(error) {
+            setPlayerStatus('Play blocked: ' + error.message);
+        });
+    } else {
+        video.pause();
+        byId('playerToggleButton').textContent = 'Play';
+        setPlayerStatus('Paused');
+    }
+}
+
 function loadCurrentStream() {
     if (!state.currentStream || !state.currentStream.playable || !state.currentStream.raw || !state.currentStream.raw.url) {
         setPlayerStatus(state.currentStream ? state.currentStream.status : 'Idle');
         return;
     }
+
+    resetTrackState();
+    renderTrackSelectors();
 
     if (hasAvplay()) {
         startAvplayStream(state.currentStream.raw.url);
@@ -1242,46 +1624,14 @@ function bindLogin() {
 
 function bindPlayer() {
     var video = byId('videoPlayer');
+    var frame = byId('videoFrameFocus');
 
     byId('playerBackButton').addEventListener('click', function() {
         goBackOnce();
     });
 
     byId('playerToggleButton').addEventListener('click', function() {
-        if (!state.currentStream || !state.currentStream.playable || !state.currentStream.raw || !state.currentStream.raw.url) {
-            setPlayerStatus('No playable stream selected');
-            return;
-        }
-
-        if (state.playerMode === 'avplay' && hasAvplay()) {
-            try {
-                if (byId('playerToggleButton').textContent === 'Play') {
-                    webapis.avplay.play();
-                    byId('playerToggleButton').textContent = 'Pause';
-                    setPlayerStatus('Playing (AVPlay)');
-                } else {
-                    webapis.avplay.pause();
-                    byId('playerToggleButton').textContent = 'Play';
-                    setPlayerStatus('Paused (AVPlay)');
-                }
-            } catch (error) {
-                setPlayerStatus('AVPlay toggle failed');
-            }
-            return;
-        }
-
-        if (video.paused) {
-            video.play().then(function() {
-                byId('playerToggleButton').textContent = 'Pause';
-                setPlayerStatus('Playing (HTML5)');
-            }).catch(function(error) {
-                setPlayerStatus('Play blocked: ' + error.message);
-            });
-        } else {
-            video.pause();
-            byId('playerToggleButton').textContent = 'Play';
-            setPlayerStatus('Paused');
-        }
+        toggleCurrentPlayback();
     });
 
     byId('playerReloadButton').addEventListener('click', function() {
@@ -1296,9 +1646,17 @@ function bindPlayer() {
         setPlayerFullscreen(!state.playerFullscreen);
     });
 
+    frame.addEventListener('click', function() {
+        toggleCurrentPlayback();
+    });
+
+    video.addEventListener('loadedmetadata', refreshPlaybackTracks);
+    video.addEventListener('loadeddata', refreshPlaybackTracks);
+    video.addEventListener('durationchange', refreshPlaybackTracks);
     video.addEventListener('playing', function() {
         byId('playerToggleButton').textContent = 'Pause';
         setPlayerStatus('Playing');
+        refreshPlaybackTracks();
     });
     video.addEventListener('pause', function() {
         byId('playerToggleButton').textContent = 'Play';

@@ -191,7 +191,7 @@
                 <section class="view view-player" data-view-panel="player">
                     <div class="player-layout">
                         <section class="player-stage-card">
-                            <div class="video-frame">
+                            <div class="video-frame" id="videoFrameFocus" tabindex="-1">
                                 <object id="avplaySurface" class="avplay-surface" type="application/avplayer"></object>
                                 <video id="videoPlayer" class="video-player" playsinline webkit-playsinline preload="auto"></video>
                                 <div class="video-empty" id="videoEmpty">
@@ -226,6 +226,20 @@
                                     <span class="status-label">Status</span>
                                     <span class="info-value" id="playerStatus">Idle</span>
                                 </div>
+                            </div>
+                            <div class="track-panel">
+                                <div class="track-panel-header">
+                                    <span class="status-label">Audio</span>
+                                    <span class="section-count" id="audioTrackCount">Default only</span>
+                                </div>
+                                <div class="track-chip-list" id="audioTrackList"></div>
+                            </div>
+                            <div class="track-panel">
+                                <div class="track-panel-header">
+                                    <span class="status-label">Subtitles</span>
+                                    <span class="section-count" id="subtitleTrackCount">Off</span>
+                                </div>
+                                <div class="track-chip-list" id="subtitleTrackList"></div>
                             </div>
                             <p class="section-copy" id="playerDescription">
                                 This player page is for direct `url` streams. Some addon entries may still require a proxy or native playback layer.

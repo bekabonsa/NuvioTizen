@@ -619,12 +619,7 @@ body.is-player-fullscreen .video-frame {
 }
 
 body.is-player-fullscreen #playerActions {
-    position: absolute;
-    left: 22px;
-    right: 22px;
-    bottom: 22px;
-    z-index: 3;
-    justify-content: center;
+    display: none;
 }
 
 .player-info-card {
@@ -641,6 +636,41 @@ body.is-player-fullscreen #playerActions {
 .player-info-row {
     padding-bottom: 14px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.track-panel {
+    margin: 0 0 18px;
+}
+
+.track-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 10px;
+}
+
+.track-chip-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.track-chip {
+    min-width: 116px;
+    min-height: 46px;
+    padding: 0 16px;
+    border-radius: 14px;
+    border: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text);
+    font-size: 16px;
+    font-weight: 600;
+}
+
+.track-chip.is-selected {
+    background: rgba(87, 199, 255, 0.12);
+    border-color: rgba(87, 199, 255, 0.28);
 }
 
 .account-layout {
@@ -721,8 +751,10 @@ input:focus {
 .card:focus,
 .stream-card:focus,
 .episode-chip:focus,
+.track-chip:focus,
 .action-button:focus,
-.nav-item:focus {
+.nav-item:focus,
+.video-frame:focus {
     outline: 4px solid rgba(87, 199, 255, 0.92);
     outline-offset: 3px;
 }
