@@ -353,6 +353,7 @@ body.is-player-fullscreen .player-layout {
     flex-wrap: nowrap;
     align-items: center;
     overflow-x: auto;
+    gap: 10px;
 }
 
 .action-button {
@@ -369,6 +370,37 @@ body.is-player-fullscreen .player-layout {
     font-size: 18px;
     font-weight: 600;
     transition: transform 140ms ease, background 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.player-icon-button {
+    min-width: 64px;
+    width: 64px;
+    height: 64px;
+    min-height: 64px;
+    padding: 0;
+    border-radius: 20px;
+    position: relative;
+    flex: 0 0 auto;
+}
+
+.player-action-glyph {
+    font-size: 25px;
+    line-height: 1;
+    font-weight: 700;
+}
+
+.player-action-badge {
+    position: absolute;
+    right: 8px;
+    bottom: 7px;
+    min-width: 20px;
+    padding: 0 5px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.14);
+    color: rgba(255, 255, 255, 0.92);
+    font-size: 11px;
+    line-height: 18px;
+    text-align: center;
 }
 
 .action-primary {
@@ -639,8 +671,9 @@ body.is-player-fullscreen .player-layout {
 
 .player-layout {
     display: grid;
-    grid-template-columns: minmax(0, 1.8fr) minmax(320px, 420px);
+    grid-template-columns: minmax(0, 2.15fr) minmax(300px, 360px);
     gap: 18px;
+    align-items: start;
 }
 
 body.is-player-fullscreen .player-layout {
@@ -660,7 +693,8 @@ body.is-player-fullscreen .player-stage-card {
 
 .video-frame {
     position: relative;
-    height: 560px;
+    height: 640px;
+    min-height: 640px;
     border-radius: 22px;
     overflow: hidden;
     background: #02050a;
@@ -706,6 +740,41 @@ body.is-player-fullscreen .video-frame {
 
 .video-empty.is-hidden {
     display: none;
+}
+
+.player-subtitle-overlay {
+    position: absolute;
+    left: 8%;
+    right: 8%;
+    bottom: 108px;
+    z-index: 4;
+    display: flex;
+    justify-content: center;
+    pointer-events: none;
+    text-align: center;
+    text-shadow: 0 2px 16px rgba(0, 0, 0, 0.88);
+}
+
+.player-subtitle-overlay.is-hidden {
+    display: none;
+}
+
+.player-subtitle-overlay span {
+    display: inline-block;
+    max-width: 100%;
+    padding: 10px 16px;
+    border-radius: 18px;
+    background: rgba(2, 5, 10, 0.66);
+    color: #fff;
+    font-size: 26px;
+    line-height: 1.35;
+    white-space: pre-line;
+}
+
+body.is-player-fullscreen .player-subtitle-overlay {
+    left: 12%;
+    right: 12%;
+    bottom: 132px;
 }
 
 .player-controller-card {
@@ -778,6 +847,10 @@ body.is-player-fullscreen.is-player-chrome-visible .player-controller-card {
     margin-top: 10px;
     color: var(--muted);
     font-size: 15px;
+}
+
+body.is-player-fullscreen .player-progress-caption {
+    margin-top: 8px;
 }
 
 .player-info-card {
