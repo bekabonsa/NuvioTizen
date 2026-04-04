@@ -444,7 +444,7 @@ function setPlayerToggleUi(isPlaying) {
 
 function setPlayerFullscreenUi() {
     var button = byId('playerFullscreenButton');
-    byId('playerFullscreenGlyph').textContent = state.playerFullscreen ? '⤡' : '⤢';
+    byId('playerFullscreenGlyph').textContent = state.playerFullscreen ? '❐' : '⛶';
     button.setAttribute('aria-label', state.playerFullscreen ? 'Windowed' : 'Fullscreen');
     button.setAttribute('title', state.playerFullscreen ? 'Windowed' : 'Fullscreen');
 }
@@ -649,6 +649,10 @@ function syncAvplayRect() {
     var rect;
     var left;
     var top;
+    var width;
+    var height;
+    var targetAspect = 16 / 9;
+    var rectAspect;
 
     if (state.playerMode !== 'avplay' || !hasAvplay()) {
         return;
@@ -658,6 +662,20 @@ function syncAvplayRect() {
     shellRect = shell ? shell.getBoundingClientRect() : { left: 0, top: 0 };
     left = state.playerFullscreen ? rect.left : (rect.left - shellRect.left);
     top = state.playerFullscreen ? rect.top : (rect.top - shellRect.top);
+    width = rect.width;
+    height = rect.height;
+
+    if (!state.playerFullscreen && rect.width > 0 && rect.height > 0) {
+        rectAspect = rect.width / rect.height;
+        if (rectAspect > targetAspect) {
+            width = rect.height * targetAspect;
+            left += (rect.width - width) / 2;
+        } else {
+            height = rect.width / targetAspect;
+            top += (rect.height - height) / 2;
+        }
+    }
+
     try {
         try {
             webapis.avplay.setDisplayMethod(state.playerFullscreen
@@ -669,8 +687,8 @@ function syncAvplayRect() {
         webapis.avplay.setDisplayRect(
             Math.max(0, Math.round(left)),
             Math.max(0, Math.round(top)),
-            Math.max(1, Math.round(rect.width)),
-            Math.max(1, Math.round(rect.height))
+            Math.max(1, Math.round(width)),
+            Math.max(1, Math.round(height))
         );
     } catch (error) {
         setPlayerStatus('AVPlay rect failed');
@@ -2572,10 +2590,6 @@ function bindLogin() {
 function bindPlayer() {
     var video = byId('videoPlayer');
     var frame = byId('videoFrameFocus');
-
-    byId('playerBackButton').addEventListener('click', function() {
-        goBackOnce();
-    });
 
     byId('playerSeekBackButton').addEventListener('click', function() {
         seekCurrentPlayback(-30000);
