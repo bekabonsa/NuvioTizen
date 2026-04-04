@@ -27,6 +27,7 @@
                     <button class="nav-item is-active" type="button" data-view="home">Home</button>
                     <button class="nav-item" type="button" data-view="movies">Movies</button>
                     <button class="nav-item" type="button" data-view="series">Series</button>
+                    <button class="nav-item" type="button" data-view="search">Search</button>
                     <button class="nav-item" type="button" data-view="addons">Addons</button>
                     <button class="nav-item" type="button" data-view="player">Player</button>
                     <button class="nav-item" type="button" data-view="login">Login</button>
@@ -133,6 +134,57 @@
                         </div>
                         <p class="section-copy">Pick a show to load its episodes, then choose addon streams from the next page.</p>
                         <div class="catalog-grid" id="seriesGrid"></div>
+                    </section>
+                </section>
+
+                <section class="view view-search" data-view-panel="search">
+                    <section class="section-card">
+                        <div class="section-header">
+                            <div>
+                                <span class="section-kicker">Discover</span>
+                                <h2>Search</h2>
+                            </div>
+                            <span class="section-count" id="searchResultCount">No results yet</span>
+                        </div>
+                        <p class="section-copy">Search Cinemeta for movies and series, then jump straight into addon streams.</p>
+                        <div class="search-toolbar">
+                            <label class="field search-field">
+                                <span>Search term</span>
+                                <input id="searchInput" type="text" autocomplete="off" placeholder="Search movies or series" />
+                            </label>
+                            <div class="search-scope-group" id="searchScopeGroup">
+                                <button class="action-button search-scope is-selected" id="searchScopeAll" type="button">All</button>
+                                <button class="action-button search-scope" id="searchScopeMovies" type="button">Movies</button>
+                                <button class="action-button search-scope" id="searchScopeSeries" type="button">Series</button>
+                            </div>
+                            <div class="action-row search-actions">
+                                <button class="action-button action-primary" id="searchSubmitButton" type="button">Search</button>
+                                <button class="action-button" id="searchClearButton" type="button">Clear</button>
+                            </div>
+                        </div>
+                        <p class="helper" id="searchMessage">Enter at least 2 characters to search live catalogs.</p>
+                    </section>
+
+                    <section class="section-card" id="searchMovieSection">
+                        <div class="section-header">
+                            <div>
+                                <span class="section-kicker">Results</span>
+                                <h2>Movies</h2>
+                            </div>
+                            <span class="section-count" id="searchMovieCount">0 results</span>
+                        </div>
+                        <div class="catalog-grid" id="searchMovieGrid"></div>
+                    </section>
+
+                    <section class="section-card" id="searchSeriesSection">
+                        <div class="section-header">
+                            <div>
+                                <span class="section-kicker">Results</span>
+                                <h2>Series</h2>
+                            </div>
+                            <span class="section-count" id="searchSeriesCount">0 results</span>
+                        </div>
+                        <div class="catalog-grid" id="searchSeriesGrid"></div>
                     </section>
                 </section>
 

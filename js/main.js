@@ -2,7 +2,7 @@ var API_BASE = 'https://api.strem.io';
 var CINEMETA_BASE = 'https://v3-cinemeta.strem.io';
 var STORAGE_AUTH = 'stremio.authKey';
 var STORAGE_USER = 'stremio.user';
-var NAV_VIEWS = ['home', 'movies', 'series', 'addons', 'player', 'login'];
+var NAV_VIEWS = ['home', 'movies', 'series', 'search', 'addons', 'player', 'login'];
 var VIEW_META = {
     home: {
         eyebrow: 'Discover',
@@ -18,6 +18,11 @@ var VIEW_META = {
         eyebrow: 'Catalog',
         title: 'Series',
         subtitle: 'Pick a show, then choose an episode before loading streams.'
+    },
+    search: {
+        eyebrow: 'Discover',
+        title: 'Search',
+        subtitle: 'Search live Cinemeta catalogs for movies and series.'
     },
     addons: {
         eyebrow: 'Sources',
@@ -42,6 +47,10 @@ var state = {
     addons: [],
     movies: [],
     series: [],
+    searchQuery: '',
+    searchScope: 'all',
+    searchMovies: [],
+    searchSeries: [],
     selectedItem: null,
     selectedType: null,
     selectedEpisodes: [],
@@ -112,6 +121,17 @@ function setLoginMessage(text, tone) {
 
 function setAddonsMessage(text, tone) {
     var el = byId('addonsMessage');
+    el.textContent = text;
+    el.className = 'helper';
+    if (tone === 'error') {
+        el.classList.add('is-error');
+    } else if (tone === 'success') {
+        el.classList.add('is-success');
+    }
+}
+
+function setSearchMessage(text, tone) {
+    var el = byId('searchMessage');
     el.textContent = text;
     el.className = 'helper';
     if (tone === 'error') {
@@ -721,6 +741,29 @@ function getMainRows() {
         return chunkItems(queryAll('#seriesGrid .card'), 4);
     }
 
+    if (state.currentView === 'search') {
+        var searchRows = [];
+        var searchScopeButtons = queryAll('#searchScopeGroup .search-scope');
+        var searchActionButtons = queryAll('.search-actions .action-button');
+        var searchMovieCards = state.searchScope === 'series' ? [] : queryAll('#searchMovieGrid .card');
+        var searchSeriesCards = state.searchScope === 'movies' ? [] : queryAll('#searchSeriesGrid .card');
+
+        searchRows.push([byId('searchInput')]);
+        if (searchScopeButtons.length) {
+            searchRows.push(searchScopeButtons);
+        }
+        if (searchActionButtons.length) {
+            searchRows.push(searchActionButtons);
+        }
+        if (searchMovieCards.length) {
+            searchRows = searchRows.concat(chunkItems(searchMovieCards, 4));
+        }
+        if (searchSeriesCards.length) {
+            searchRows = searchRows.concat(chunkItems(searchSeriesCards, 4));
+        }
+        return searchRows;
+    }
+
     if (state.currentView === 'addons') {
         var addonRows = [];
         var episodes = queryAll('#episodeRail .episode-chip');
@@ -962,6 +1005,13 @@ function normalizeCatalogPayload(payload) {
         return [];
     }
     return payload.metas.slice(0, 12);
+}
+
+function normalizeCatalogPayloadWithLimit(payload, limit) {
+    if (!payload || !Array.isArray(payload.metas)) {
+        return [];
+    }
+    return payload.metas.slice(0, typeof limit === 'number' ? limit : 12);
 }
 
 function requestJson(url, method, body) {
@@ -1570,6 +1620,84 @@ function renderCatalogViews() {
     }
 }
 
+function updateSearchScopeUi() {
+    byId('searchScopeAll').classList.toggle('is-selected', state.searchScope === 'all');
+    byId('searchScopeMovies').classList.toggle('is-selected', state.searchScope === 'movies');
+    byId('searchScopeSeries').classList.toggle('is-selected', state.searchScope === 'series');
+}
+
+function renderSearchResults() {
+    var movieSection = byId('searchMovieSection');
+    var seriesSection = byId('searchSeriesSection');
+    var total = state.searchMovies.length + state.searchSeries.length;
+
+    renderCards('searchMovieGrid', state.searchMovies, 'movie');
+    renderCards('searchSeriesGrid', state.searchSeries, 'series');
+
+    byId('searchMovieCount').textContent = state.searchMovies.length + ' result' + (state.searchMovies.length === 1 ? '' : 's');
+    byId('searchSeriesCount').textContent = state.searchSeries.length + ' result' + (state.searchSeries.length === 1 ? '' : 's');
+    byId('searchResultCount').textContent = total ? total + ' result' + (total === 1 ? '' : 's') : 'No results yet';
+
+    movieSection.style.display = state.searchScope === 'series' ? 'none' : 'block';
+    seriesSection.style.display = state.searchScope === 'movies' ? 'none' : 'block';
+}
+
+function searchCatalogs() {
+    var query = byId('searchInput').value.replace(/^\s+|\s+$/g, '');
+    var requests = [];
+
+    state.searchQuery = query;
+
+    if (query.length < 2) {
+        state.searchMovies = [];
+        state.searchSeries = [];
+        renderSearchResults();
+        setSearchMessage('Enter at least 2 characters to search live catalogs.', 'error');
+        return Promise.resolve();
+    }
+
+    setSearchMessage('Searching for "' + query + '"...', null);
+
+    if (state.searchScope === 'all' || state.searchScope === 'movies') {
+        requests.push(
+            requestJson(CINEMETA_BASE + '/catalog/movie/top/search=' + encodeURIComponent(query) + '.json', 'GET')
+                .then(function(payload) {
+                    state.searchMovies = normalizeCatalogPayloadWithLimit(payload, 20);
+                }).catch(function() {
+                    state.searchMovies = [];
+                })
+        );
+    } else {
+        state.searchMovies = [];
+    }
+
+    if (state.searchScope === 'all' || state.searchScope === 'series') {
+        requests.push(
+            requestJson(CINEMETA_BASE + '/catalog/series/top/search=' + encodeURIComponent(query) + '.json', 'GET')
+                .then(function(payload) {
+                    state.searchSeries = normalizeCatalogPayloadWithLimit(payload, 20);
+                }).catch(function() {
+                    state.searchSeries = [];
+                })
+        );
+    } else {
+        state.searchSeries = [];
+    }
+
+    return Promise.all(requests).then(function() {
+        var total = state.searchMovies.length + state.searchSeries.length;
+        renderSearchResults();
+        if (total) {
+            setSearchMessage('Loaded ' + total + ' matching title' + (total === 1 ? '' : 's') + '.', 'success');
+            if (state.currentView === 'search') {
+                setTimeout(focusCurrent, 0);
+            }
+        } else {
+            setSearchMessage('No matching titles were found.', 'error');
+        }
+    });
+}
+
 function createCard(item, kind) {
     var card = document.createElement('button');
     var poster = document.createElement('div');
@@ -1751,6 +1879,47 @@ function bindHomeActions() {
             resetMain: true
         });
         setTimeout(focusCurrent, 0);
+    });
+}
+
+function bindSearch() {
+    function setScope(scope) {
+        state.searchScope = scope;
+        updateSearchScopeUi();
+        renderSearchResults();
+    }
+
+    byId('searchScopeAll').addEventListener('click', function() {
+        setScope('all');
+    });
+
+    byId('searchScopeMovies').addEventListener('click', function() {
+        setScope('movies');
+    });
+
+    byId('searchScopeSeries').addEventListener('click', function() {
+        setScope('series');
+    });
+
+    byId('searchSubmitButton').addEventListener('click', function() {
+        searchCatalogs();
+    });
+
+    byId('searchClearButton').addEventListener('click', function() {
+        byId('searchInput').value = '';
+        state.searchQuery = '';
+        state.searchMovies = [];
+        state.searchSeries = [];
+        renderSearchResults();
+        setSearchMessage('Enter at least 2 characters to search live catalogs.', null);
+        setTimeout(focusCurrent, 0);
+    });
+
+    byId('searchInput').addEventListener('keydown', function(event) {
+        if (event.keyCode === 13) {
+            event.preventDefault();
+            searchCatalogs();
+        }
     });
 }
 
@@ -1981,6 +2150,7 @@ function init() {
 
     bindNav();
     bindHomeActions();
+    bindSearch();
     bindLogin();
     bindPlayer();
 
@@ -1989,6 +2159,8 @@ function init() {
     updateNavState();
     updateViewState();
     updatePageHeader();
+    updateSearchScopeUi();
+    renderSearchResults();
     renderAddons();
     renderPlayerState();
 
