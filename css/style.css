@@ -747,7 +747,7 @@ body.is-player-fullscreen .video-frame {
     position: absolute;
     left: 8%;
     right: 8%;
-    bottom: 108px;
+    bottom: 144px;
     z-index: 4;
     display: flex;
     justify-content: center;
@@ -775,7 +775,15 @@ body.is-player-fullscreen .video-frame {
 body.is-player-fullscreen .player-subtitle-overlay {
     left: 12%;
     right: 12%;
-    bottom: 132px;
+    bottom: 166px;
+}
+
+body.is-player-chrome-visible .player-subtitle-overlay {
+    bottom: 172px;
+}
+
+body.is-player-fullscreen.is-player-chrome-visible .player-subtitle-overlay {
+    bottom: 204px;
 }
 
 .player-controller-card {

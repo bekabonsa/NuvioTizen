@@ -245,15 +245,81 @@ function isExternalSubtitleTrackId(trackId) {
     return typeof trackId === 'string' && trackId.indexOf('subtitle-ext-') === 0;
 }
 
-function requestText(url) {
+function mergeHeaderMap(target, source) {
+    if (!source || typeof source !== 'object') {
+        return target;
+    }
+
+    Object.keys(source).forEach(function(key) {
+        if (source[key] === null || typeof source[key] === 'undefined') {
+            return;
+        }
+        target[key] = String(source[key]);
+    });
+
+    return target;
+}
+
+function resolveUrl(baseUrl, value) {
+    var anchor;
+
+    if (!value) {
+        return '';
+    }
+
+    if (/^(https?:|file:|data:|blob:)/i.test(value)) {
+        return value;
+    }
+
+    anchor = document.createElement('a');
+    anchor.href = baseUrl || window.location.href;
+    anchor.pathname = value.charAt(0) === '/'
+        ? value
+        : anchor.pathname.replace(/[^/]*$/, '') + value;
+
+    return anchor.href;
+}
+
+function getSubtitleRequestHeaders(streamEntry, subtitleTrack) {
+    var headers = {};
+    var stream = streamEntry && streamEntry.raw ? streamEntry.raw : null;
+    var behaviorHints = stream && stream.behaviorHints ? stream.behaviorHints : null;
+    var proxyHeaders = behaviorHints && behaviorHints.proxyHeaders ? behaviorHints.proxyHeaders : null;
+
+    if (proxyHeaders && proxyHeaders.request) {
+        mergeHeaderMap(headers, proxyHeaders.request);
+    }
+
+    if (stream && stream.proxyHeaders && stream.proxyHeaders.request) {
+        mergeHeaderMap(headers, stream.proxyHeaders.request);
+    }
+
+    if (subtitleTrack && subtitleTrack.headers) {
+        mergeHeaderMap(headers, subtitleTrack.headers);
+    }
+
+    if (subtitleTrack && subtitleTrack.requestHeaders) {
+        mergeHeaderMap(headers, subtitleTrack.requestHeaders);
+    }
+
+    return headers;
+}
+
+function requestText(url, headers) {
     return new Promise(function(resolve, reject) {
         var xhr = new XMLHttpRequest();
         xhr.open('GET', url, true);
+        if (typeof xhr.overrideMimeType === 'function') {
+            xhr.overrideMimeType('text/plain; charset=utf-8');
+        }
+        Object.keys(headers || {}).forEach(function(key) {
+            xhr.setRequestHeader(key, headers[key]);
+        });
         xhr.onreadystatechange = function() {
             if (xhr.readyState !== 4) {
                 return;
             }
-            if (xhr.status >= 200 && xhr.status < 300) {
+            if ((xhr.status >= 200 && xhr.status < 300) || (xhr.status === 0 && xhr.responseText)) {
                 resolve(xhr.responseText);
                 return;
             }
@@ -268,14 +334,21 @@ function requestText(url) {
 
 function stripSubtitleMarkup(text) {
     return String(text || '')
+        .replace(/\\N/g, '\n')
+        .replace(/\\n/g, '\n')
         .replace(/<[^>]+>/g, '')
         .replace(/\{\\[^}]+\}/g, '')
+        .replace(/\{[^}]+\}/g, '')
         .replace(/&nbsp;/g, ' ')
         .trim();
 }
 
 function parseSubtitleTimestamp(value) {
-    var parts = String(value || '').trim().replace(',', '.').split(':').map(function(part) {
+    var token = String(value || '')
+        .replace(/^\uFEFF/, '')
+        .trim()
+        .match(/[0-9]+(?::[0-9]+){0,2}[,.][0-9]+|[0-9]+(?::[0-9]+){1,2}/);
+    var parts = (token ? token[0] : '0').replace(',', '.').split(':').map(function(part) {
         return part.trim();
     });
     var hours = 0;
@@ -296,24 +369,64 @@ function parseSubtitleTimestamp(value) {
     return Math.round((((hours * 60) + minutes) * 60 + seconds) * 1000);
 }
 
+function parseAssDialogueLine(line) {
+    var body = String(line || '').replace(/^Dialogue:\s*/i, '');
+    var fields = [];
+    var commaIndex;
+    var text;
+
+    while (fields.length < 9) {
+        commaIndex = body.indexOf(',');
+        if (commaIndex === -1) {
+            return null;
+        }
+        fields.push(body.slice(0, commaIndex));
+        body = body.slice(commaIndex + 1);
+    }
+
+    text = stripSubtitleMarkup(body);
+    if (!text) {
+        return null;
+    }
+
+    return {
+        start: parseSubtitleTimestamp(fields[1]),
+        end: parseSubtitleTimestamp(fields[2]),
+        text: text
+    };
+}
+
 function parseSubtitleFile(text) {
-    var normalized = String(text || '').replace(/\r/g, '').trim();
+    var normalized = String(text || '').replace(/^\uFEFF/, '').replace(/\r/g, '').trim();
     var blocks;
+    var dialogueCues;
 
     if (!normalized) {
         return [];
     }
 
     normalized = normalized.replace(/^WEBVTT[^\n]*\n+/i, '');
+    dialogueCues = normalized.split('\n').map(parseAssDialogueLine).filter(function(cue) {
+        return cue && cue.end > cue.start;
+    });
+
+    if (dialogueCues.length) {
+        return dialogueCues;
+    }
+
     blocks = normalized.split(/\n{2,}/);
 
     return blocks.map(function(block) {
         var lines = block.split('\n').filter(Boolean);
         var timingLine;
         var textLines;
-        var parts;
+        var match;
 
         if (!lines.length) {
+            return null;
+        }
+
+        if (/^(NOTE|STYLE|REGION)\b/i.test(lines[0].trim())) {
             return null;
         }
 
@@ -321,24 +434,34 @@ function parseSubtitleFile(text) {
             lines.shift();
         }
 
-        timingLine = lines.shift();
+        if (lines[0] && lines[0].indexOf('-->') === -1 && lines[1] && lines[1].indexOf('-->') !== -1) {
+            lines.shift();
+        }
+
+        timingLine = lines.shift() || '';
         if (!timingLine || timingLine.indexOf('-->') === -1) {
             return null;
         }
 
-        parts = timingLine.split('-->');
+        match = timingLine.match(/^\s*([0-9:\.,]+)\s*-->\s*([0-9:\.,]+)/);
+        if (!match) {
+            return null;
+        }
+
         textLines = lines.map(stripSubtitleMarkup).filter(Boolean);
         if (!textLines.length) {
             return null;
         }
 
         return {
-            start: parseSubtitleTimestamp(parts[0]),
-            end: parseSubtitleTimestamp(parts[1]),
+            start: parseSubtitleTimestamp(match[1]),
+            end: parseSubtitleTimestamp(match[2]),
             text: textLines.join('\n')
         };
     }).filter(function(cue) {
         return cue && cue.end > cue.start;
+    }).sort(function(left, right) {
+        return left.start - right.start;
     });
 }
 
@@ -372,6 +495,7 @@ function updateSubtitleOverlay(currentTimeMs) {
 
 function getExternalSubtitleTracks(stream) {
     var subtitles = stream && stream.raw && Array.isArray(stream.raw.subtitles) ? stream.raw.subtitles : [];
+    var baseUrl = stream && stream.addonBaseUrl ? stream.addonBaseUrl : '';
 
     return subtitles.map(function(track, index) {
         var url = track.url || track.src || track.file;
@@ -384,7 +508,8 @@ function getExternalSubtitleTracks(stream) {
             id: 'subtitle-ext-' + index,
             index: index,
             kind: 'external',
-            url: url,
+            url: resolveUrl(baseUrl, url),
+            headers: getSubtitleRequestHeaders(stream, track),
             label: normalizeTrackLabel('subtitle', {
                 language: language,
                 label: label
@@ -982,7 +1107,7 @@ function selectSubtitleTrack(trackId) {
             }
         }
 
-        requestText(selectedTrack.url).then(function(text) {
+        requestText(selectedTrack.url, selectedTrack.headers).then(function(text) {
             state.externalSubtitleCues = parseSubtitleFile(text);
             state.activeSubtitleTrack = trackId;
             updateSubtitleOverlay(state.currentTimeMs);
@@ -991,7 +1116,7 @@ function selectSubtitleTrack(trackId) {
                 setPlayerStatus('Subtitle file loaded but no cues were found');
                 return;
             }
-            setPlayerStatus('Subtitles: ' + selectedTrack.label);
+            setPlayerStatus('Subtitles: ' + selectedTrack.label + ' (' + state.externalSubtitleCues.length + ' cues)');
         }).catch(function() {
             state.externalSubtitleCues = [];
             state.activeSubtitleTrack = 'subtitle-off';
@@ -1974,6 +2099,7 @@ function fetchStreamsFromAddon(addon, type, videoId) {
 
                 return {
                     addonName: addonName,
+                    addonBaseUrl: baseUrl,
                     playable: playable,
                     status: status,
                     title: title,
