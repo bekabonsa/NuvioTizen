@@ -143,7 +143,8 @@ body.is-player-fullscreen .app-frame {
     gap: 10px;
     font-size: 24px;
     font-weight: 600;
-    transition: background 140ms ease, border-color 140ms ease, color 140ms ease, transform 140ms ease, box-shadow 140ms ease;
+    transition: background 110ms ease, border-color 110ms ease, color 110ms ease, transform 110ms ease, box-shadow 110ms ease;
+    backface-visibility: hidden;
 }
 
 .nav-item-search {
@@ -154,6 +155,18 @@ body.is-player-fullscreen .app-frame {
 .nav-icon {
     font-size: 28px;
     line-height: 1;
+}
+
+.nav-icon-svg {
+    width: 22px;
+    height: 22px;
+    display: block;
+    flex: 0 0 auto;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2.2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
 }
 
 .nav-item.is-active {
@@ -277,25 +290,23 @@ body[data-current-view="player"] .page-header {
 }
 
 .content-row {
-    transition: opacity 180ms ease, transform 180ms ease, filter 180ms ease;
+    transition: opacity 120ms ease, transform 120ms ease;
+    backface-visibility: hidden;
 }
 
 .content-row.is-row-current {
     opacity: 1;
     transform: translateY(0) scale(1);
-    filter: saturate(1);
 }
 
 .content-row.is-row-near {
     opacity: 0.78;
-    transform: translateY(10px) scale(0.985);
-    filter: saturate(0.92);
+    transform: translateY(8px) scale(0.992);
 }
 
 .content-row.is-row-far {
     opacity: 0.46;
-    transform: translateY(18px) scale(0.97);
-    filter: saturate(0.72);
+    transform: translateY(14px) scale(0.986);
 }
 
 .hero-banner,
@@ -310,8 +321,9 @@ body[data-current-view="player"] .page-header {
     border-radius: 28px;
     border: 1px solid var(--border);
     background: var(--bg-card);
-    box-shadow: var(--shadow-soft);
+    box-shadow: 0 10px 18px rgba(0, 0, 0, 0.12);
     overflow: hidden;
+    contain: layout paint;
 }
 
 .hero-banner {
@@ -334,9 +346,7 @@ body[data-current-view="player"] .page-header {
 .hero-overlay {
     position: absolute;
     inset: 0;
-    background:
-        linear-gradient(180deg, rgba(3, 4, 8, 0.08), rgba(3, 4, 8, 0.62)),
-        radial-gradient(circle at right center, rgba(0, 0, 0, 0), rgba(0, 0, 0, 0.36) 58%, rgba(0, 0, 0, 0.72) 100%);
+    background: linear-gradient(180deg, rgba(3, 4, 8, 0.08), rgba(3, 4, 8, 0.62));
 }
 
 .hero-copy {
@@ -430,7 +440,8 @@ body[data-current-view="player"] .page-header {
     gap: 10px;
     font-size: 18px;
     font-weight: 700;
-    transition: transform 140ms ease, background 140ms ease, border-color 140ms ease, box-shadow 140ms ease, color 140ms ease;
+    transition: transform 110ms ease, background 110ms ease, border-color 110ms ease, box-shadow 110ms ease, color 110ms ease;
+    backface-visibility: hidden;
 }
 
 .action-primary {
@@ -485,6 +496,8 @@ body[data-current-view="player"] .page-header {
     overflow-x: auto;
     overflow-y: visible;
     padding: 6px 4px 20px;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
 }
 
 .rail-continue {
@@ -499,9 +512,12 @@ body[data-current-view="player"] .page-header {
 }
 
 .card-row {
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    display: flex;
     gap: 18px;
+    width: 100%;
+    align-items: flex-start;
+    overflow: hidden;
+    contain: layout paint;
 }
 
 .browse-actions {
@@ -544,7 +560,8 @@ body[data-current-view="player"] .page-header {
     color: inherit;
     text-align: left;
     transform-origin: center center;
-    transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease, opacity 160ms ease;
+    transition: transform 110ms ease, box-shadow 110ms ease, border-color 110ms ease, opacity 110ms ease;
+    backface-visibility: hidden;
 }
 
 #continueRail .card {
@@ -553,9 +570,9 @@ body[data-current-view="player"] .page-header {
 }
 
 .card-row .card {
-    min-width: 0;
-    max-width: none;
-    width: 100%;
+    flex: 0 0 calc((100% - 54px) / 4);
+    min-width: calc((100% - 54px) / 4);
+    max-width: calc((100% - 54px) / 4);
 }
 
 .poster {
@@ -766,6 +783,8 @@ body[data-current-view="player"] .page-header {
     display: inline-flex;
     gap: 10px;
     flex-wrap: wrap;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
 }
 
 .search-actions {
@@ -1060,6 +1079,8 @@ body.is-player-fullscreen.is-player-chrome-visible .player-controller-card {
     flex-wrap: nowrap;
     align-items: center;
     overflow-x: auto;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
 }
 
 .player-icon-button {
@@ -1127,7 +1148,7 @@ body.is-player-fullscreen.is-player-chrome-visible .player-controller-card {
 button:focus,
 input:focus {
     outline: none;
-    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.22), 0 16px 26px rgba(0, 0, 0, 0.24);
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.18), 0 10px 18px rgba(0, 0, 0, 0.16);
 }
 
 .nav-item:focus,
@@ -1141,22 +1162,22 @@ input:focus {
 .player-progress-button:focus {
     outline: none;
     border-color: rgba(255, 255, 255, 0.3);
-    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.24), 0 18px 28px rgba(0, 0, 0, 0.24);
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.22), 0 12px 20px rgba(0, 0, 0, 0.18);
 }
 
 .card:focus {
     outline: none;
     z-index: 3;
     border-color: rgba(255, 255, 255, 0.22);
-    box-shadow: 0 22px 42px rgba(0, 0, 0, 0.32);
-    transform: scale(1.085);
+    box-shadow: 0 10px 18px rgba(0, 0, 0, 0.16);
+    transform: scale(1.028);
 }
 
 #playerActions .player-icon-button:focus {
     background: rgba(255, 255, 255, 0.12);
     border-color: rgba(255, 255, 255, 0.28);
-    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.22), 0 16px 28px rgba(0, 0, 0, 0.28);
-    transform: translateY(-2px);
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.18), 0 10px 16px rgba(0, 0, 0, 0.2);
+    transform: translateY(-1px);
 }
 
 .card:focus .poster,
@@ -1167,6 +1188,17 @@ input:focus {
 ::-webkit-scrollbar {
     width: 10px;
     height: 10px;
+}
+
+.nav-list::-webkit-scrollbar,
+.rail::-webkit-scrollbar,
+.season-rail::-webkit-scrollbar,
+.episode-rail::-webkit-scrollbar,
+.genre-chip-row::-webkit-scrollbar,
+.search-scope-group::-webkit-scrollbar,
+.player-actions::-webkit-scrollbar {
+    width: 0;
+    height: 0;
 }
 
 ::-webkit-scrollbar-thumb {

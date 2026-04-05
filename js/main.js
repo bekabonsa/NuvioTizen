@@ -1418,50 +1418,74 @@ function getMainRowContainers() {
     }
 
     if (state.currentView === 'movies') {
-        return [
-            byId('movieGenreSection'),
-            byId('movieShelfSection'),
-            byId('movieLoadSection')
-        ].filter(Boolean);
+        var movieContainers = [byId('movieGenreSection')];
+        queryAll('#movieGrid .card-row').forEach(function(row) {
+            movieContainers.push(row);
+        });
+        movieContainers.push(byId('movieLoadSection'));
+        return movieContainers.filter(Boolean);
     }
 
     if (state.currentView === 'series') {
-        return [
-            byId('seriesGenreSection'),
-            byId('seriesShelfSection'),
-            byId('seriesLoadSection')
-        ].filter(Boolean);
+        var seriesContainers = [byId('seriesGenreSection')];
+        queryAll('#seriesGrid .card-row').forEach(function(row) {
+            seriesContainers.push(row);
+        });
+        seriesContainers.push(byId('seriesLoadSection'));
+        return seriesContainers.filter(Boolean);
     }
 
     if (state.currentView === 'search') {
-        return [
+        var searchContainers = [
             byId('searchFormSection'),
-            byId('searchMovieSection'),
-            byId('searchSeriesSection')
-        ].filter(function(el) {
+            byId('searchFormSection'),
+            byId('searchFormSection')
+        ];
+
+        queryAll('#searchMovieGrid .card-row').forEach(function(row) {
+            searchContainers.push(row);
+        });
+        queryAll('#searchSeriesGrid .card-row').forEach(function(row) {
+            searchContainers.push(row);
+        });
+
+        return searchContainers.filter(function(el) {
             return el && el.style.display !== 'none';
         });
     }
 
     if (state.currentView === 'addons') {
-        return [
-            byId('detailHeroRow'),
-            byId('seasonSection'),
-            byId('episodeSection'),
-            byId('streamSection')
-        ].filter(function(el) {
-            return el && el.style.display !== 'none';
+        var addonContainers = [byId('detailHeroRow')];
+        if (byId('seasonSection') && byId('seasonSection').style.display !== 'none') {
+            addonContainers.push(byId('seasonSection'));
+        }
+        if (byId('episodeSection') && byId('episodeSection').style.display !== 'none') {
+            addonContainers.push(byId('episodeSection'));
+        }
+        queryAll('#streamList .stream-card').forEach(function() {
+            addonContainers.push(byId('streamSection'));
         });
+        return addonContainers.filter(Boolean);
     }
 
     if (state.currentView === 'player') {
-        return [
-            queryAll('.player-layout > section')[0],
-            queryAll('.player-layout > section')[1]
-        ].filter(Boolean);
+        var playerContainers = [];
+        var stage = queryAll('.player-layout > section')[0];
+        var side = queryAll('.player-layout > section')[1];
+        var rows = getMainRows();
+
+        rows.forEach(function(_, index) {
+            if (state.playerFullscreen) {
+                playerContainers.push(stage);
+                return;
+            }
+            playerContainers.push(index <= 1 ? stage : side);
+        });
+
+        return playerContainers.filter(Boolean);
     }
 
-    return queryAll('.view-login .content-row');
+    return [byId('loginForm'), byId('loginForm'), byId('loginForm')].filter(Boolean);
 }
 
 function getMainRows() {
@@ -1679,7 +1703,14 @@ function scrollElementIntoView(el) {
         }
     }
 
-    if (el && typeof el.scrollIntoView === 'function') {
+    if (el && typeof el.scrollIntoView === 'function' && (!parent || !parent.classList || (
+        !parent.classList.contains('rail') &&
+        !parent.classList.contains('season-rail') &&
+        !parent.classList.contains('episode-rail') &&
+        !parent.classList.contains('genre-chip-row') &&
+        parent.id !== 'playerActions' &&
+        parent.id !== 'searchScopeGroup'
+    ))) {
         el.scrollIntoView({
             block: 'nearest',
             inline: 'nearest'
@@ -1687,22 +1718,72 @@ function scrollElementIntoView(el) {
     }
 }
 
+function scrollActiveViewToTop() {
+    var activeView = queryAll('.view.is-active')[0];
+    if (activeView) {
+        activeView.scrollTop = 0;
+    }
+}
+
+function scrollRowContainerIntoView(container) {
+    var activeView = queryAll('.view.is-active')[0];
+    var containerRect;
+    var viewRect;
+    var topDelta;
+    var bottomDelta;
+    var margin = 20;
+
+    if (!activeView || !container) {
+        return;
+    }
+
+    if (state.mainRow === 0) {
+        activeView.scrollTop = 0;
+        return;
+    }
+
+    containerRect = container.getBoundingClientRect();
+    viewRect = activeView.getBoundingClientRect();
+    topDelta = containerRect.top - (viewRect.top + margin);
+    bottomDelta = containerRect.bottom - (viewRect.bottom - margin);
+
+    if (topDelta < 0) {
+        activeView.scrollTop += topDelta;
+    } else if (bottomDelta > 0) {
+        activeView.scrollTop += bottomDelta;
+    }
+}
+
 function updateRowEmphasis() {
     var rows = getMainRowContainers();
-    rows.forEach(function(row, index) {
+    var uniqueRows = [];
+
+    rows.forEach(function(row) {
+        if (row && uniqueRows.indexOf(row) === -1) {
+            uniqueRows.push(row);
+        }
+    });
+
+    uniqueRows.forEach(function(row) {
         row.classList.remove('is-row-current', 'is-row-near', 'is-row-far');
         if (state.focusRegion !== 'main') {
             return;
         }
-        if (index === state.mainRow) {
+
+        var closestDistance = Infinity;
+        rows.forEach(function(mapped, index) {
+            if (mapped === row) {
+                closestDistance = Math.min(closestDistance, Math.abs(index - state.mainRow));
+            }
+        });
+
+        if (closestDistance === 0) {
             row.classList.add('is-row-current');
-            return;
-        }
-        if (index === state.mainRow + 1 || index === state.mainRow - 1) {
+        } else if (closestDistance === 1) {
             row.classList.add('is-row-near');
-            return;
+        } else {
+            row.classList.add('is-row-far');
         }
-        row.classList.add('is-row-far');
     });
 }
 
@@ -1720,6 +1801,7 @@ function focusCurrent() {
             state.navIndex = navItems.length - 1;
         }
 
+        scrollActiveViewToTop();
         navItems[state.navIndex].focus();
         updateRowEmphasis();
         return;
@@ -1732,6 +1814,11 @@ function focusCurrent() {
         state.focusRegion = 'nav';
         focusCurrent();
         return;
+    }
+
+    var rowContainers = getMainRowContainers();
+    if (rowContainers[state.mainRow]) {
+        scrollRowContainerIntoView(rowContainers[state.mainRow]);
     }
 
     rows[state.mainRow][state.mainCol].focus();
@@ -1917,6 +2004,9 @@ function updateFeatured(item, kind) {
 }
 
 function scheduleFeaturedUpdate(item, kind) {
+    if (state.currentView !== 'home') {
+        return;
+    }
     if (state.featuredTimer) {
         clearTimeout(state.featuredTimer);
     }
@@ -2866,7 +2956,7 @@ function renderCardRows(containerId, items, kind, rowSize) {
     container.innerHTML = '';
     rows.forEach(function(group, index) {
         var row = document.createElement('div');
-        row.className = 'card-row';
+        row.className = 'card-row content-row';
         row.id = containerId + 'Row' + index;
 
         group.forEach(function(item) {
