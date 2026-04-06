@@ -314,7 +314,7 @@
                                                 <span class="player-action-glyph">↶</span>
                                                 <span class="player-action-badge">30</span>
                                             </button>
-                                            <button class="action-button action-primary player-icon-button" id="playerToggleButton" type="button" aria-label="Play" title="Play">
+                                            <button class="action-button player-icon-button" id="playerToggleButton" type="button" aria-label="Play" title="Play">
                                                 <span class="player-action-glyph" id="playerToggleGlyph">▶</span>
                                             </button>
                                             <button class="action-button player-icon-button" id="playerSeekForwardButton" type="button" aria-label="Forward 30 seconds" title="Forward 30 seconds">
@@ -384,72 +384,76 @@
                 </section>
 
                 <section class="view view-login" data-view-panel="login">
-                    <div class="account-layout">
-                        <form class="login-card content-row" id="loginForm">
-                            <span class="section-kicker">Account</span>
-                            <h2>Sign in to Nuvio</h2>
-                            <p class="section-copy">Use your Nuvio account to connect the TV shell to your synced addons and session.</p>
+                    <section class="account-shell content-row" id="accountShellSection">
+                        <div class="account-panel-left">
+                            <form class="login-card" id="loginForm">
+                                <span class="section-kicker">Account</span>
+                                <h2>Sign in to Nuvio</h2>
+                                <p class="section-copy">Use your Nuvio account to connect the TV shell to your synced addons and session.</p>
 
-                            <label class="field">
-                                <span>Email</span>
-                                <input id="emailInput" type="email" autocomplete="username" placeholder="you@example.com" />
-                            </label>
+                                <label class="field">
+                                    <span>Email</span>
+                                    <input id="emailInput" type="email" autocomplete="username" placeholder="you@example.com" />
+                                </label>
 
-                            <label class="field">
-                                <span>Password</span>
-                                <input id="passwordInput" type="password" autocomplete="current-password" placeholder="Password" />
-                            </label>
+                                <label class="field">
+                                    <span>Password</span>
+                                    <input id="passwordInput" type="password" autocomplete="current-password" placeholder="Password" />
+                                </label>
 
-                            <div class="action-row">
-                                <button type="submit" class="action-button action-primary" id="loginButton">Log in</button>
-                                <button type="button" class="action-button" id="logoutButton">Log out</button>
-                            </div>
+                                <div class="action-row">
+                                    <button type="submit" class="action-button action-primary" id="loginButton">Log in</button>
+                                    <button type="button" class="action-button" id="logoutButton">Log out</button>
+                                </div>
 
-                            <p class="helper" id="loginMessage">Use your Nuvio account here.</p>
-                        </form>
+                                <p class="helper" id="loginMessage">Use your Nuvio account here.</p>
+                            </form>
 
-                        <section class="qr-login-card content-row" id="qrLoginCard">
-                            <span class="section-kicker">Quick Sign-In</span>
-                            <h2>Sign in with your phone</h2>
-                            <p class="section-copy">
-                                Scan the QR code to connect this TV shell without typing your Nuvio credentials on the remote.
-                            </p>
+                            <section class="account-card">
+                                <span class="section-kicker">Session</span>
+                                <h2>Current account</h2>
+                                <div class="account-stat">
+                                    <span class="account-stat-label">Email</span>
+                                    <span class="account-stat-value" id="accountEmail">Guest</span>
+                                </div>
+                                <div class="account-stat">
+                                    <span class="account-stat-label">Session token</span>
+                                    <span class="account-stat-value account-stat-mono" id="authKeyLabel">Not set</span>
+                                </div>
+                                <div class="account-note" id="accountNote">
+                                    Sign in to keep your Nuvio session active inside this TV shell.
+                                </div>
+                            </section>
+                        </div>
 
-                            <div class="qr-login-frame">
-                                <img
-                                    id="qrLoginImage"
-                                    class="qr-login-image"
-                                    alt="QR code for TV sign in"
-                                    src=""
-                                />
-                            </div>
+                        <div class="account-panel-right">
+                            <section class="qr-login-card" id="qrLoginCard">
+                                <span class="section-kicker">Quick Sign-In</span>
+                                <h2>Sign in with your phone</h2>
+                                <p class="section-copy">
+                                    Scan the QR code to connect this TV shell without typing your Nuvio credentials on the remote.
+                                </p>
 
-                            <div class="qr-login-code" id="qrLoginCode">Preparing QR sign-in…</div>
-                            <div class="qr-login-expiry" id="qrLoginExpiry">Waiting for a fresh QR session.</div>
+                                <div class="qr-login-frame">
+                                    <img
+                                        id="qrLoginImage"
+                                        class="qr-login-image"
+                                        alt="QR code for TV sign in"
+                                        src=""
+                                    />
+                                </div>
 
-                            <div class="action-row">
-                                <button type="button" class="action-button" id="qrRefreshButton">Refresh QR</button>
-                            </div>
+                                <div class="qr-login-code" id="qrLoginCode">Preparing QR sign-in…</div>
+                                <div class="qr-login-expiry" id="qrLoginExpiry">Waiting for a fresh QR session.</div>
 
-                            <p class="helper" id="qrLoginMessage">Open the QR code on your phone to approve sign-in.</p>
-                        </section>
+                                <div class="action-row">
+                                    <button type="button" class="action-button" id="qrRefreshButton">Refresh QR</button>
+                                </div>
 
-                        <section class="account-card content-row">
-                            <span class="section-kicker">Session</span>
-                            <h2>Current account</h2>
-                            <div class="account-stat">
-                                <span class="account-stat-label">Email</span>
-                                <span class="account-stat-value" id="accountEmail">Guest</span>
-                            </div>
-                            <div class="account-stat">
-                                <span class="account-stat-label">Session token</span>
-                                <span class="account-stat-value account-stat-mono" id="authKeyLabel">Not set</span>
-                            </div>
-                            <div class="account-note" id="accountNote">
-                                Sign in to keep your Nuvio session active inside this TV shell.
-                            </div>
-                        </section>
-                    </div>
+                                <p class="helper" id="qrLoginMessage">Open the QR code on your phone to approve sign-in.</p>
+                            </section>
+                        </div>
+                    </section>
                 </section>
             </div>
         </main>

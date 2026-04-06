@@ -12,6 +12,7 @@ var FALLBACK_MOVIE_GENRES = ['Top', 'Action', 'Comedy', 'Drama', 'Sci-Fi', 'Thri
 var FALLBACK_SERIES_GENRES = ['Top', 'Drama', 'Comedy', 'Crime', 'Sci-Fi', 'Animation', 'Thriller', 'Documentary'];
 var NAV_VIEWS = ['search', 'home', 'series', 'movies', 'login'];
 var FEATURED_ROTATION_MS = 9000;
+var FEATURED_FADE_MS = 180;
 var SEARCH_KEYBOARD_ROWS = [
     ['a', 'b', 'c', 'd', 'e', 'f'],
     ['g', 'h', 'i', 'j', 'k', 'l'],
@@ -121,6 +122,9 @@ var state = {
     featuredItem: null,
     featuredKind: null,
     featuredLabel: '',
+    featuredRenderedKey: null,
+    featuredTransitionToken: 0,
+    featuredTransitionTimer: null,
     autoplayPending: false,
     qrAuthAccessToken: null,
     qrAuthRefreshToken: null,
@@ -145,6 +149,67 @@ function byId(id) {
 
 function queryAll(selector) {
     return Array.prototype.slice.call(document.querySelectorAll(selector));
+}
+
+function clearFeaturedTransitionTimer() {
+    if (!state.featuredTransitionTimer) {
+        return;
+    }
+    clearTimeout(state.featuredTransitionTimer);
+    state.featuredTransitionTimer = null;
+}
+
+function preloadFeaturedArtwork(url) {
+    var src = String(url || '').trim();
+    if (!src) {
+        return Promise.resolve(null);
+    }
+    return new Promise(function(resolve, reject) {
+        var image = new Image();
+        var settled = false;
+
+        function finish(error) {
+            if (settled) {
+                return;
+            }
+            settled = true;
+            image.onload = null;
+            image.onerror = null;
+            if (error) {
+                reject(error);
+                return;
+            }
+            resolve(image);
+        }
+
+        function finalize() {
+            if (typeof image.decode === 'function') {
+                image.decode().then(function() {
+                    finish();
+                }).catch(function() {
+                    finish();
+                });
+                return;
+            }
+            finish();
+        }
+
+        image.decoding = 'async';
+        image.loading = 'eager';
+        image.onload = finalize;
+        image.onerror = function() {
+            finish(new Error('Failed to preload featured artwork.'));
+        };
+        image.src = src;
+
+        if (image.complete) {
+            if (image.naturalWidth > 0 || image.naturalHeight > 0) {
+                finalize();
+            } else {
+                finish(new Error('Failed to preload featured artwork.'));
+            }
+        }
+    });
 }
 
 function updateConnectionStatus(text, ok, isError) {
@@ -831,6 +896,83 @@ function getPreferredSubtitleTracks() {
     return state.externalSubtitleTracks.concat(state.subtitleTracks);
 }
 
+function getResolvedAudioTrackId() {
+    var video = byId('videoPlayer');
+    var audioTracks = video && video.audioTracks;
+    var matchingTrack = state.audioTracks.some(function(track) {
+        return track.id === state.activeAudioTrack;
+    });
+    var index;
+
+    if (matchingTrack) {
+        return state.activeAudioTrack;
+    }
+
+    if (audioTracks && typeof audioTracks.length === 'number') {
+        for (index = 0; index < audioTracks.length; index += 1) {
+            if (audioTracks[index].enabled) {
+                return 'audio-' + index;
+            }
+        }
+    }
+
+    return state.audioTracks.length ? state.audioTracks[0].id : null;
+}
+
+function getResolvedSubtitleTrackId() {
+    var preferredTracks = getPreferredSubtitleTracks();
+    var video = byId('videoPlayer');
+    var textTracks = video && video.textTracks;
+    var matchingTrack = state.activeSubtitleTrack === 'subtitle-off'
+        || preferredTracks.some(function(track) {
+            return track.id === state.activeSubtitleTrack;
+        });
+    var index;
+
+    if (matchingTrack) {
+        return state.activeSubtitleTrack;
+    }
+
+    if (textTracks && typeof textTracks.length === 'number') {
+        for (index = 0; index < textTracks.length; index += 1) {
+            if (textTracks[index].mode && textTracks[index].mode !== 'disabled') {
+                return 'subtitle-' + index;
+            }
+        }
+    }
+
+    return 'subtitle-off';
+}
+
+function getAudioBadgeLabel() {
+    var currentId = getResolvedAudioTrackId();
+    var index = state.audioTracks.findIndex(function(track) {
+        return track.id === currentId;
+    });
+
+    if (index === -1) {
+        return '1';
+    }
+
+    return String(index + 1);
+}
+
+function getSubtitleBadgeLabel() {
+    var preferredTracks = getPreferredSubtitleTracks();
+    var currentId = getResolvedSubtitleTrackId();
+    var index;
+
+    if (currentId === 'subtitle-off' || !preferredTracks.length) {
+        return 'Off';
+    }
+
+    index = preferredTracks.findIndex(function(track) {
+        return track.id === currentId;
+    });
+
+    return index === -1 ? 'Off' : String(index + 1);
+}
+
 function applyPreferredSubtitleSelection() {
     var preferredTracks = getPreferredSubtitleTracks();
 
@@ -848,6 +990,7 @@ function applyPreferredSubtitleSelection() {
 }
 
 function cycleAudioTrack() {
+    var currentId;
     var nextIndex;
 
     if (!state.audioTracks.length) {
@@ -855,19 +998,23 @@ function cycleAudioTrack() {
         return;
     }
 
+    currentId = getResolvedAudioTrackId();
     nextIndex = state.audioTracks.findIndex(function(track) {
-        return track.id === state.activeAudioTrack;
+        return track.id === currentId;
     });
     nextIndex = (nextIndex + 1 + state.audioTracks.length) % state.audioTracks.length;
     selectAudioTrack(state.audioTracks[nextIndex].id);
 }
 
 function cycleSubtitleTrack() {
+    var currentId;
     var tracks = [{ id: 'subtitle-off', label: 'Off' }].concat(getPreferredSubtitleTracks());
-    var nextIndex = tracks.findIndex(function(track) {
-        return track.id === state.activeSubtitleTrack;
-    });
+    var nextIndex;
 
+    currentId = getResolvedSubtitleTrackId();
+    nextIndex = tracks.findIndex(function(track) {
+        return track.id === currentId;
+    });
     nextIndex = (nextIndex + 1 + tracks.length) % tracks.length;
     selectSubtitleTrack(tracks[nextIndex].id);
 }
@@ -888,8 +1035,8 @@ function setPlayerFullscreenUi() {
 }
 
 function updateTrackBadges() {
-    byId('playerAudioBadge').textContent = state.audioTracks.length ? String(state.audioTracks.length) : '1';
-    byId('playerSubtitleBadge').textContent = getPreferredSubtitleTracks().length ? String(getPreferredSubtitleTracks().length) : 'Off';
+    byId('playerAudioBadge').textContent = getAudioBadgeLabel();
+    byId('playerSubtitleBadge').textContent = getSubtitleBadgeLabel();
 }
 
 function formatPlaybackTime(ms) {
@@ -1172,6 +1319,8 @@ function renderTrackChips(containerId, tracks, activeId, onSelect) {
 }
 
 function renderTrackSelectors() {
+    var activeAudioTrack;
+    var activeSubtitleTrack;
     var hasPlayableSelection = !!(state.currentStream && state.currentStream.playable);
     var audioTracks = state.audioTracks.slice();
     var preferredSubtitleTracks = getPreferredSubtitleTracks();
@@ -1182,6 +1331,11 @@ function renderTrackSelectors() {
         }].concat(preferredSubtitleTracks)
         : [];
 
+    activeAudioTrack = getResolvedAudioTrackId();
+    activeSubtitleTrack = getResolvedSubtitleTrackId();
+    state.activeAudioTrack = activeAudioTrack;
+    state.activeSubtitleTrack = activeSubtitleTrack;
+
     byId('audioTrackCount').textContent = audioTracks.length
         ? String(audioTracks.length) + ' option' + (audioTracks.length === 1 ? '' : 's')
         : 'Default only';
@@ -1189,8 +1343,8 @@ function renderTrackSelectors() {
         ? String(preferredSubtitleTracks.length) + ' option' + (preferredSubtitleTracks.length === 1 ? '' : 's')
         : 'Off';
 
-    renderTrackChips('audioTrackList', audioTracks, state.activeAudioTrack, selectAudioTrack);
-    renderTrackChips('subtitleTrackList', subtitleTracks, state.activeSubtitleTrack, selectSubtitleTrack);
+    renderTrackChips('audioTrackList', audioTracks, activeAudioTrack, selectAudioTrack);
+    renderTrackChips('subtitleTrackList', subtitleTracks, activeSubtitleTrack, selectSubtitleTrack);
     updateTrackBadges();
 }
 
@@ -2378,27 +2532,9 @@ function updateSelectedEpisodesForSeason() {
     }
 }
 
-function updateFeatured(item, kind) {
-    var nextKey;
-    var normalizedKind;
-    var posterUrl;
-    if (!item) {
-        return;
-    }
-
-    nextKey = kind + ':' + (item.id || item.name || '');
-    if (state.featuredKey === nextKey) {
-        return;
-    }
-    state.featuredKey = nextKey;
-    normalizedKind = kind && kind.toLowerCase().indexOf('series') !== -1 ? 'series' : 'movie';
-    state.featuredItem = item;
-    state.featuredKind = normalizedKind;
-    state.featuredLabel = kind;
-
+function applyFeaturedContent(item, kind, posterUrl) {
     var poster = byId('featuredPoster');
-    var label = poster.querySelector('.featured-poster-label');
-    posterUrl = item.background || item.poster || '';
+    var label = poster ? poster.querySelector('.featured-poster-label') : null;
 
     byId('featuredTag').textContent = kind;
     byId('featuredTitle').textContent = item.name || 'Untitled';
@@ -2408,15 +2544,90 @@ function updateFeatured(item, kind) {
         item.releaseInfo ||
         'Linked addon metadata is connected. This item is being used as the featured spotlight.';
 
+    if (!poster || !label) {
+        return;
+    }
+
+    poster.style.backgroundImage = '';
     if (posterUrl) {
-        poster.style.backgroundImage = '';
         poster.style.setProperty('--hero-art', 'url("' + posterUrl + '")');
         label.textContent = kind;
-    } else {
-        poster.style.backgroundImage = '';
-        poster.style.removeProperty('--hero-art');
-        label.textContent = 'No artwork';
+        return;
     }
+
+    poster.style.removeProperty('--hero-art');
+    label.textContent = 'No artwork';
+}
+
+function updateFeatured(item, kind, options) {
+    var nextKey;
+    var normalizedKind;
+    var posterUrl;
+    var poster;
+    var token;
+    var immediate;
+
+    if (!item) {
+        return;
+    }
+
+    options = options || {};
+    nextKey = kind + ':' + (item.id || item.name || '');
+    if (!options.force && state.featuredRenderedKey === nextKey) {
+        state.featuredKey = nextKey;
+        return;
+    }
+
+    normalizedKind = kind && kind.toLowerCase().indexOf('series') !== -1 ? 'series' : 'movie';
+    posterUrl = item.background || item.poster || '';
+    poster = byId('featuredPoster');
+
+    state.featuredKey = nextKey;
+    state.featuredItem = item;
+    state.featuredKind = normalizedKind;
+    state.featuredLabel = kind;
+    state.featuredTransitionToken = Number(state.featuredTransitionToken || 0) + 1;
+    token = state.featuredTransitionToken;
+    immediate = Boolean(options.immediate || !state.featuredRenderedKey || !poster);
+
+    preloadFeaturedArtwork(posterUrl).catch(function() {
+        return null;
+    }).then(function() {
+        if (token !== state.featuredTransitionToken) {
+            return;
+        }
+
+        if (!poster) {
+            applyFeaturedContent(item, kind, posterUrl);
+            state.featuredRenderedKey = nextKey;
+            return;
+        }
+
+        if (immediate) {
+            clearFeaturedTransitionTimer();
+            poster.classList.remove('is-transitioning');
+            applyFeaturedContent(item, kind, posterUrl);
+            state.featuredRenderedKey = nextKey;
+            return;
+        }
+
+        clearFeaturedTransitionTimer();
+        poster.classList.add('is-transitioning');
+        state.featuredTransitionTimer = setTimeout(function() {
+            if (token !== state.featuredTransitionToken) {
+                return;
+            }
+            applyFeaturedContent(item, kind, posterUrl);
+            state.featuredRenderedKey = nextKey;
+            requestAnimationFrame(function() {
+                if (token !== state.featuredTransitionToken) {
+                    return;
+                }
+                poster.classList.remove('is-transitioning');
+            });
+            state.featuredTransitionTimer = null;
+        }, FEATURED_FADE_MS);
+    });
 }
 
 function scheduleFeaturedUpdate(item, kind) {
@@ -5209,6 +5420,11 @@ function bindLogin() {
 function bindPlayer() {
     var video = byId('videoPlayer');
     var frame = byId('videoFrameFocus');
+    var controller = byId('playerControllerChrome');
+
+    controller.addEventListener('click', function(event) {
+        event.stopPropagation();
+    });
 
     byId('playerSeekBackButton').addEventListener('click', function() {
         seekCurrentPlayback(-30000);
@@ -5411,6 +5627,15 @@ function handleRight() {
 }
 
 function handleUp() {
+    if (state.currentView === 'search' && state.focusRegion === 'main') {
+        var searchPaneInfo = getSearchPaneInfo();
+        if (searchPaneInfo.resultRows && state.mainRow === searchPaneInfo.firstResultRow) {
+            state.focusRegion = 'nav';
+            focusCurrent();
+            return;
+        }
+    }
+
     if (state.currentView === 'player' && state.playerFullscreen) {
         if (state.mainRow > 0) {
             state.mainRow -= 1;
