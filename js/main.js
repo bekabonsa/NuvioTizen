@@ -13,6 +13,8 @@ var FALLBACK_SERIES_GENRES = ['Top', 'Drama', 'Comedy', 'Crime', 'Sci-Fi', 'Anim
 var NAV_VIEWS = ['search', 'home', 'series', 'movies', 'login'];
 var FEATURED_ROTATION_MS = 9000;
 var FEATURED_FADE_MS = 180;
+var PLAYER_SCRUB_INITIAL_NUDGE_MS = 5000;
+var PLAYER_SCRUB_TICK_MS = 50;
 var SEARCH_KEYBOARD_ROWS = [
     ['a', 'b', 'c', 'd', 'e', 'f'],
     ['g', 'h', 'i', 'j', 'k', 'l'],
@@ -107,6 +109,12 @@ var state = {
     durationMs: 0,
     playbackTicker: null,
     playerChromeTimer: null,
+    seekPreviewActive: false,
+    seekPreviewTargetMs: 0,
+    seekPreviewDirection: 0,
+    seekPreviewStartedAt: 0,
+    seekPreviewLastTickAt: 0,
+    seekPreviewTimer: null,
     playerMode: 'html5',
     playerFullscreen: false,
     currentView: 'home',
@@ -1062,15 +1070,63 @@ function formatPlaybackTime(ms) {
     ].join(':');
 }
 
-function updateProgressUi() {
-    var percent = 0;
-    if (state.durationMs > 0) {
-        percent = Math.max(0, Math.min(100, (state.currentTimeMs / state.durationMs) * 100));
+function getDisplayedPlaybackTimeMs() {
+    return state.seekPreviewActive ? state.seekPreviewTargetMs : state.currentTimeMs;
+}
+
+function getSeekPreviewSpeedMultiplier(heldMs) {
+    if (heldMs >= 5000) {
+        return 128;
+    }
+    if (heldMs >= 3000) {
+        return 64;
+    }
+    if (heldMs >= 1500) {
+        return 32;
+    }
+    if (heldMs >= 500) {
+        return 16;
+    }
+    return 8;
+}
+
+function clearSeekPreviewTimer() {
+    if (!state.seekPreviewTimer) {
+        return;
+    }
+    clearInterval(state.seekPreviewTimer);
+    state.seekPreviewTimer = null;
+}
+
+function clampSeekPreviewTarget(targetMs) {
+    var duration = state.durationMs || 0;
+    var target = Math.max(0, targetMs || 0);
+
+    if (duration > 0) {
+        target = Math.min(duration, target);
     }
 
-    byId('playerCurrentTime').textContent = formatPlaybackTime(state.currentTimeMs);
+    return target;
+}
+
+function updateProgressUi() {
+    var displayTime = getDisplayedPlaybackTimeMs();
+    var percent = 0;
+    if (state.durationMs > 0) {
+        percent = Math.max(0, Math.min(100, (displayTime / state.durationMs) * 100));
+    }
+
+    byId('playerCurrentTime').textContent = formatPlaybackTime(displayTime);
     byId('playerDuration').textContent = formatPlaybackTime(state.durationMs);
     byId('playerProgressFill').style.width = String(percent) + '%';
+    if (state.seekPreviewActive) {
+        byId('playerProgressCaption').textContent =
+            'Scrub to ' + formatPlaybackTime(displayTime) +
+            ' • ' + String(getSeekPreviewSpeedMultiplier(Date.now() - state.seekPreviewStartedAt)) + 'x' +
+            ' • release to seek';
+        return;
+    }
+
     byId('playerProgressCaption').textContent = state.durationMs > 0
         ? Math.round(percent) + '% watched'
         : 'Waiting for stream timing...';
@@ -1084,6 +1140,12 @@ function setPlaybackMetrics(currentMs, durationMs) {
 }
 
 function resetPlaybackMetrics() {
+    clearSeekPreviewTimer();
+    state.seekPreviewActive = false;
+    state.seekPreviewTargetMs = 0;
+    state.seekPreviewDirection = 0;
+    state.seekPreviewStartedAt = 0;
+    state.seekPreviewLastTickAt = 0;
     state.currentTimeMs = 0;
     state.durationMs = 0;
     updateProgressUi();
@@ -1156,11 +1218,18 @@ function startPlaybackTicker() {
     }, 500);
 }
 
-function seekCurrentPlayback(deltaMs) {
+function seekPlaybackTo(targetMs, statusPrefix) {
     var video = byId('videoPlayer');
-    var current = state.currentTimeMs || 0;
     var duration = state.durationMs || 0;
-    var target = current + deltaMs;
+    var target = Math.max(0, targetMs || 0);
+
+    if (state.seekPreviewActive) {
+        clearSeekPreviewTimer();
+        state.seekPreviewActive = false;
+        state.seekPreviewDirection = 0;
+        state.seekPreviewStartedAt = 0;
+        state.seekPreviewLastTickAt = 0;
+    }
 
     showPlayerChrome(false);
 
@@ -1176,7 +1245,7 @@ function seekCurrentPlayback(deltaMs) {
             }
             webapis.avplay.seekTo(target, function() {
                 setPlaybackMetrics(target, duration);
-                setPlayerStatus((deltaMs < 0 ? 'Rewound to ' : 'Skipped to ') + formatPlaybackTime(target));
+                setPlayerStatus((statusPrefix || 'Skipped to ') + formatPlaybackTime(target));
             }, function() {
                 setPlayerStatus('Seek failed');
             });
@@ -1190,10 +1259,95 @@ function seekCurrentPlayback(deltaMs) {
     try {
         video.currentTime = target / 1000;
         readHtml5Metrics();
-        setPlayerStatus((deltaMs < 0 ? 'Rewound to ' : 'Skipped to ') + formatPlaybackTime(target));
+        setPlayerStatus((statusPrefix || 'Skipped to ') + formatPlaybackTime(target));
     } catch (error2) {
         setPlayerStatus('Seek failed');
     }
+}
+
+function stopSeekPreview(commit) {
+    var target;
+
+    if (!state.seekPreviewActive) {
+        return;
+    }
+
+    target = clampSeekPreviewTarget(state.seekPreviewTargetMs);
+    clearSeekPreviewTimer();
+    state.seekPreviewActive = false;
+    state.seekPreviewDirection = 0;
+    state.seekPreviewStartedAt = 0;
+    state.seekPreviewLastTickAt = 0;
+
+    if (!commit) {
+        updateProgressUi();
+        return;
+    }
+
+    state.currentTimeMs = target;
+    updateProgressUi();
+    seekPlaybackTo(target, 'Skipped to ');
+}
+
+function tickSeekPreview() {
+    var now;
+    var elapsedMs;
+    var deltaMs;
+    var multiplier;
+    var nextTarget;
+
+    if (!state.seekPreviewActive || !state.seekPreviewDirection) {
+        return;
+    }
+
+    now = Date.now();
+    elapsedMs = Math.max(0, now - state.seekPreviewStartedAt);
+    deltaMs = Math.max(0, now - state.seekPreviewLastTickAt);
+    multiplier = getSeekPreviewSpeedMultiplier(elapsedMs);
+    nextTarget = state.seekPreviewTargetMs + (state.seekPreviewDirection * multiplier * deltaMs);
+
+    state.seekPreviewLastTickAt = now;
+    state.seekPreviewTargetMs = clampSeekPreviewTarget(nextTarget);
+    updateProgressUi();
+}
+
+function beginOrUpdateSeekPreview(direction) {
+    var now = Date.now();
+
+    if ((state.durationMs || 0) <= 0) {
+        seekPlaybackTo((state.currentTimeMs || 0) + (direction * 30000), direction < 0 ? 'Rewound to ' : 'Skipped to ');
+        return;
+    }
+
+    showPlayerChrome(true);
+
+    if (!state.seekPreviewActive) {
+        state.seekPreviewActive = true;
+        state.seekPreviewDirection = direction;
+        state.seekPreviewStartedAt = now;
+        state.seekPreviewLastTickAt = now;
+        state.seekPreviewTargetMs = clampSeekPreviewTarget((state.currentTimeMs || 0) + (direction * PLAYER_SCRUB_INITIAL_NUDGE_MS));
+        clearSeekPreviewTimer();
+        state.seekPreviewTimer = setInterval(tickSeekPreview, PLAYER_SCRUB_TICK_MS);
+        updateProgressUi();
+        setPlayerStatus('Scrubbing ' + (direction < 0 ? 'backward' : 'forward') + ' • release to seek');
+        return;
+    }
+
+    if (state.seekPreviewDirection === direction) {
+        return;
+    }
+
+    state.seekPreviewDirection = direction;
+    state.seekPreviewStartedAt = now;
+    state.seekPreviewLastTickAt = now;
+    state.seekPreviewTargetMs = clampSeekPreviewTarget(state.seekPreviewTargetMs + (direction * PLAYER_SCRUB_INITIAL_NUDGE_MS));
+    updateProgressUi();
+    setPlayerStatus('Scrubbing ' + (direction < 0 ? 'backward' : 'forward') + ' • release to seek');
+}
+
+function seekCurrentPlayback(deltaMs) {
+    seekPlaybackTo((state.currentTimeMs || 0) + deltaMs, deltaMs < 0 ? 'Rewound to ' : 'Skipped to ');
 }
 
 function hasAvplay() {
@@ -5440,7 +5594,7 @@ function bindPlayer() {
 
     byId('playerProgressButton').addEventListener('click', function() {
         showPlayerChrome(true);
-        setPlayerStatus('Use left and right to seek');
+        setPlayerStatus('Hold left or right to scrub, release to seek');
     });
 
     byId('playerAudioButton').addEventListener('click', function() {
@@ -5504,9 +5658,14 @@ function bindPlayer() {
 }
 
 function handleLeft() {
+    if (state.currentView === 'player' && !state.playerFullscreen && state.mainRow === 0) {
+        beginOrUpdateSeekPreview(-1);
+        return;
+    }
+
     if (state.currentView === 'player' && state.playerFullscreen) {
         if (state.mainRow === 1) {
-            seekCurrentPlayback(-30000);
+            beginOrUpdateSeekPreview(-1);
             return;
         }
         if (state.mainRow === 0) {
@@ -5567,9 +5726,14 @@ function handleLeft() {
 }
 
 function handleRight() {
+    if (state.currentView === 'player' && !state.playerFullscreen && state.mainRow === 0) {
+        beginOrUpdateSeekPreview(1);
+        return;
+    }
+
     if (state.currentView === 'player' && state.playerFullscreen) {
         if (state.mainRow === 1) {
-            seekCurrentPlayback(30000);
+            beginOrUpdateSeekPreview(1);
             return;
         }
         if (state.mainRow === 0) {
@@ -5733,6 +5897,13 @@ function init() {
         if (event.keyCode === 10009) {
             event.preventDefault();
             goBackOnce();
+        }
+    });
+
+    document.addEventListener('keyup', function(event) {
+        if ((event.keyCode === 37 || event.keyCode === 39) && state.seekPreviewActive) {
+            event.preventDefault();
+            stopSeekPreview(true);
         }
     });
 

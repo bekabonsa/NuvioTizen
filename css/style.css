@@ -393,8 +393,8 @@ body[data-current-view="player"] .content-row.is-row-far {
     border-radius: inherit;
     background-color: #0b0d14;
     background-image:
-        linear-gradient(90deg, rgba(5, 6, 10, 0.92) 0%, rgba(5, 6, 10, 0.78) 34%, rgba(5, 6, 10, 0.22) 66%, rgba(5, 6, 10, 0.08) 100%),
-        linear-gradient(180deg, rgba(12, 14, 24, 0.18), rgba(12, 14, 24, 0.72)),
+        radial-gradient(circle at 0% 100%, rgba(5, 6, 10, 0.96) 0%, rgba(5, 6, 10, 0.88) 2%, rgba(5, 6, 10, 0.58) 18%, rgba(5, 6, 10, 0.18) 54%, rgba(5, 6, 10, 0.00) 80%),
+        radial-gradient(circle at 0% 100%, rgba(12, 14, 24, 0.68) 0%, rgba(12, 14, 24, 0.34) 14%, rgba(12, 14, 24, 0.12) 38%, rgba(12, 14, 24, 0.00) 54%),
         var(--hero-art, none),
         var(--hero-art, none);
     background-size:
@@ -410,7 +410,7 @@ body[data-current-view="player"] .content-row.is-row-far {
         no-repeat,
         no-repeat;
     opacity: 1;
-    transition: opacity 180ms ease;
+    transition: opacity 250ms ease;
     will-change: opacity;
 }
 
@@ -421,7 +421,7 @@ body[data-current-view="player"] .content-row.is-row-far {
 .hero-overlay {
     position: absolute;
     inset: 0;
-    background: linear-gradient(180deg, rgba(3, 4, 8, 0.08), rgba(3, 4, 8, 0.62));
+    background: radial-gradient(circle at 0% 100%, rgba(3, 4, 8, 0.22) 0%, rgba(3, 4, 8, 0.10) 8%, rgba(3, 4, 8, 0.03) 32%, rgba(3, 4, 8, 0.00) 46%);
 }
 
 .hero-copy {
@@ -716,14 +716,24 @@ body[data-current-view="player"] .content-row.is-row-far {
     transition: none;
 }
 
+/*
 .detail-hero {
     display: grid;
     grid-template-columns: minmax(0, 0.98fr) minmax(360px, 0.82fr);
     min-height: 620px;
     background: #090b11;
 }
+*/
+.detail-hero {
+    display: flex;
+    flex-direction: row;
+    width: 100%;
+    height: 100%;
+}
+
 
 .detail-backdrop {
+    flex: 7;
     position: relative;
     order: 2;
     min-height: 620px;
@@ -734,21 +744,23 @@ body[data-current-view="player"] .content-row.is-row-far {
     background-position: center;
 }
 
-.detail-art-overlay {
-    position: absolute;
-    inset: 0;
-    background:
-        linear-gradient(90deg, rgba(9, 11, 17, 0.94) 0%, rgba(9, 11, 17, 0.18) 36%, rgba(9, 11, 17, 0) 56%),
-        linear-gradient(180deg, rgba(9, 11, 17, 0.04), rgba(9, 11, 17, 0.32));
-}
-
 .detail-copy {
+    flex: 3;
     position: relative;
     z-index: 1;
     padding: 54px 44px 40px;
     display: flex;
     flex-direction: column;
     justify-content: center;
+}
+
+
+.detail-art-overlay {
+    position: absolute;
+    inset: 0;
+    background:
+        linear-gradient(90deg, rgba(9, 11, 17, 0.94) 0%, rgba(9, 11, 17, 0.18) 36%, rgba(9, 11, 17, 0) 56%),
+        linear-gradient(180deg, rgba(9, 11, 17, 0.04), rgba(9, 11, 17, 0.32));
 }
 
 .detail-description {
