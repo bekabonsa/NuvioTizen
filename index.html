@@ -3,8 +3,8 @@
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
-    <meta name="description" content="Stremio TV shell with live catalogs, addons, and player" />
-    <title>Stremio</title>
+    <meta name="description" content="Nuvio TV shell with live catalogs, addons, and player" />
+    <title>Nuvio TV</title>
     <link rel="stylesheet" type="text/css" href="css/style.css" />
     <script src="$WEBAPIS/webapis/webapis.js"></script>
     <script defer src="js/main.js"></script>
@@ -14,11 +14,11 @@
         <header class="top-chrome">
             <div class="top-brand">
                 <div class="brand-mark">
-                    <img src="images/stremio-logo.svg" alt="Stremio" class="brand-logo" />
+                    <img src="images/nuvio-logo.png" alt="Nuvio" class="brand-logo" />
                 </div>
                 <div class="brand-copy">
                     <span class="brand-kicker">Connected TV</span>
-                    <span class="brand-title">Stremio</span>
+                    <span class="brand-title">Nuvio</span>
                 </div>
             </div>
 
@@ -40,7 +40,7 @@
                     <span class="nav-label">Films</span>
                 </button>
                 <button class="nav-item" type="button" data-view="login">
-                    <span class="nav-label">My Stremio</span>
+                    <span class="nav-label">My Nuvio</span>
                 </button>
             </nav>
 
@@ -57,7 +57,7 @@
             <header class="page-header">
                 <div class="page-kicker" id="pageEyebrow">Discover</div>
                 <h1 class="page-title" id="pageTitle">Home</h1>
-                <p class="page-subtitle" id="pageSubtitle">Browse live Stremio-backed content in a TV-first shell.</p>
+                <p class="page-subtitle" id="pageSubtitle">Browse live addon-backed content in a TV-first shell.</p>
             </header>
 
             <div class="view-stack">
@@ -67,10 +67,10 @@
                             <div class="hero-overlay"></div>
                             <div class="hero-copy">
                                 <span class="featured-tag" id="featuredTag">Live catalogs</span>
-                                <h2 class="featured-title" id="featuredTitle">Top picks from Cinemeta</h2>
+                                <h2 class="featured-title" id="featuredTitle">Top picks from your linked catalogs</h2>
                                 <p class="featured-meta" id="featuredMeta">Use the top bar to move between pages.</p>
                                 <p class="featured-description" id="featuredDescription">
-                                    This shell keeps the working TV project intact while moving the experience toward a more cinematic browse layout.
+                                    This shell keeps the TV project intact while moving the experience onto Nuvio-backed auth and addon sync.
                                 </p>
                                 <div class="action-row hero-actions" id="homeActions">
                                     <button class="action-button action-primary" id="homeLoginButton" type="button">Play</button>
@@ -125,7 +125,7 @@
                             </div>
                             <span class="section-count" id="movieCount">0 loaded</span>
                         </div>
-                        <p class="section-copy">Browse by genre, inspect details, and move directly into addon streams.</p>
+                        <p class="section-copy">Browse linked catalogs, inspect details, and move directly into addon streams.</p>
                         <div class="genre-chip-row" id="movieGenreRow"></div>
                     </section>
 
@@ -155,7 +155,7 @@
                             </div>
                             <span class="section-count" id="seriesCount">0 loaded</span>
                         </div>
-                        <p class="section-copy">Browse by genre, pick a show, then move into seasons, episodes, and addon sources.</p>
+                        <p class="section-copy">Browse linked catalogs, pick a show, then move into seasons, episodes, and addon sources.</p>
                         <div class="genre-chip-row" id="seriesGenreRow"></div>
                     </section>
 
@@ -187,7 +187,7 @@
                                     </svg>
                                     <span class="search-query-text" id="searchDisplayValue">Search titles</span>
                                 </div>
-                                <p class="helper search-helper" id="searchMessage">Use the on-screen keyboard to search live catalogs.</p>
+                                <p class="helper search-helper" id="searchMessage">Use the on-screen keyboard to search linked addon catalogs.</p>
                                 <div class="search-keyboard" id="searchKeyboard"></div>
                             </section>
 
@@ -213,7 +213,7 @@
                                 </div>
                                 <div class="search-results-grid" id="searchResultGrid"></div>
                                 <div class="search-empty-state" id="searchEmptyState">
-                                    Type with the TV keyboard to see live movie and series results.
+                                    Type with the TV keyboard to see live movie and series results from your linked catalogs.
                                 </div>
                             </section>
                         </div>
@@ -251,7 +251,7 @@
                                 <button class="action-button" id="detailEpisodesButton" type="button">Episodes</button>
                                 <button class="action-button" id="detailSourcesButton" type="button">Sources</button>
                             </div>
-                            <p class="helper" id="addonsMessage">Sign in and choose a title to load addon streams.</p>
+                            <p class="helper" id="addonsMessage">Choose a title to inspect addon streams. Sign in with Nuvio to sync your full collection.</p>
                         </div>
                     </section>
 
@@ -387,8 +387,8 @@
                     <div class="account-layout">
                         <form class="login-card content-row" id="loginForm">
                             <span class="section-kicker">Account</span>
-                            <h2>Sign in to Stremio</h2>
-                            <p class="section-copy">Use your real Stremio account to connect the TV shell to your addons and session.</p>
+                            <h2>Sign in to Nuvio</h2>
+                            <p class="section-copy">Use your Nuvio account to connect the TV shell to your synced addons and session.</p>
 
                             <label class="field">
                                 <span>Email</span>
@@ -405,14 +405,14 @@
                                 <button type="button" class="action-button" id="logoutButton">Log out</button>
                             </div>
 
-                            <p class="helper" id="loginMessage">Use your Stremio account here.</p>
+                            <p class="helper" id="loginMessage">Use your Nuvio account here.</p>
                         </form>
 
                         <section class="qr-login-card content-row" id="qrLoginCard">
                             <span class="section-kicker">Quick Sign-In</span>
                             <h2>Sign in with your phone</h2>
                             <p class="section-copy">
-                                Scan the QR code to connect this TV shell without typing your Stremio credentials on the remote.
+                                Scan the QR code to connect this TV shell without typing your Nuvio credentials on the remote.
                             </p>
 
                             <div class="qr-login-frame">
@@ -442,11 +442,11 @@
                                 <span class="account-stat-value" id="accountEmail">Guest</span>
                             </div>
                             <div class="account-stat">
-                                <span class="account-stat-label">Auth key</span>
+                                <span class="account-stat-label">Session token</span>
                                 <span class="account-stat-value account-stat-mono" id="authKeyLabel">Not set</span>
                             </div>
                             <div class="account-note" id="accountNote">
-                                Sign in to keep your Stremio session active inside this TV shell.
+                                Sign in to keep your Nuvio session active inside this TV shell.
                             </div>
                         </section>
                     </div>

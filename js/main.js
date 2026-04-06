@@ -1,10 +1,12 @@
-var API_BASE = 'https://api.strem.io';
 var CINEMETA_BASE = 'https://v3-cinemeta.strem.io';
+var OPENSUBTITLES_BASE = 'https://opensubtitles-v3.strem.io';
+var DEFAULT_ADDON_URLS = [CINEMETA_BASE, OPENSUBTITLES_BASE];
 var SUPABASE_URL = 'https://dpyhjjcoabcglfmgecug.supabase.co';
 var SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRweWhqamNvYWJjZ2xmbWdlY3VnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA3ODYyNDcsImV4cCI6MjA4NjM2MjI0N30.U-3QSNDdpsnvRk_7ZL419AFTOtggHJJcmkodxeXjbkg';
-var TV_LOGIN_REDIRECT_BASE_URL = 'https://www.stremio.com/tv-login';
-var STORAGE_AUTH = 'stremio.authKey';
-var STORAGE_USER = 'stremio.user';
+var TV_LOGIN_REDIRECT_BASE_URL = 'https://nuvioapp.space/tv-login';
+var STORAGE_AUTH = 'nuvio.accessToken';
+var STORAGE_REFRESH = 'nuvio.refreshToken';
+var STORAGE_USER = 'nuvio.user';
 var STORAGE_CONTINUE = 'stremio.continueWatching';
 var FALLBACK_MOVIE_GENRES = ['Top', 'Action', 'Comedy', 'Drama', 'Sci-Fi', 'Thriller', 'Animation', 'Documentary'];
 var FALLBACK_SERIES_GENRES = ['Top', 'Drama', 'Comedy', 'Crime', 'Sci-Fi', 'Animation', 'Thriller', 'Documentary'];
@@ -28,17 +30,17 @@ var VIEW_META = {
     movies: {
         eyebrow: 'Catalog',
         title: 'Films',
-        subtitle: 'Browse cinematic rows, change genres, and drill into sources without leaving the TV flow.'
+        subtitle: 'Browse linked film catalogs and drill into sources without leaving the TV flow.'
     },
     series: {
         eyebrow: 'Catalog',
         title: 'Series',
-        subtitle: 'Browse shows, then move into seasons, episodes, and installed addon sources.'
+        subtitle: 'Browse linked show catalogs, then move into seasons, episodes, and installed addon sources.'
     },
     search: {
         eyebrow: 'Discover',
         title: 'Search',
-        subtitle: 'Search live Cinemeta catalogs for films and series.'
+        subtitle: 'Search linked addon catalogs for films and series.'
     },
     addons: {
         eyebrow: 'Details',
@@ -52,22 +54,24 @@ var VIEW_META = {
     },
     login: {
         eyebrow: 'Account',
-        title: 'My Stremio',
-        subtitle: 'Connect your account, restore your session, and use your installed addons.'
+        title: 'My Nuvio',
+        subtitle: 'Connect your Nuvio account, restore your synced session, and use your linked addons.'
     }
 };
 
 var state = {
     authKey: null,
+    refreshToken: null,
     user: null,
+    ownerId: null,
     addons: [],
     continueWatching: [],
     movies: [],
     series: [],
-    movieGenres: FALLBACK_MOVIE_GENRES.slice(),
-    seriesGenres: FALLBACK_SERIES_GENRES.slice(),
-    selectedMovieGenre: 'Top',
-    selectedSeriesGenre: 'Top',
+    movieGenres: [],
+    seriesGenres: [],
+    selectedMovieGenre: '',
+    selectedSeriesGenre: '',
     movieBrowseItems: [],
     seriesBrowseItems: [],
     movieSkip: 0,
@@ -239,17 +243,111 @@ function uniqueList(items) {
     return output;
 }
 
+function maskToken(value) {
+    var token = String(value || '').trim();
+
+    if (!token) {
+        return 'Not set';
+    }
+    if (token.length <= 20) {
+        return token;
+    }
+
+    return token.slice(0, 10) + '…' + token.slice(-8);
+}
+
+function normalizeAddonType(type) {
+    var normalized = String(type || '').toLowerCase();
+
+    if (normalized === 'tv') {
+        return 'series';
+    }
+
+    return normalized;
+}
+
+function getCompatibleTypes(type) {
+    var normalized = normalizeAddonType(type);
+
+    if (normalized === 'series') {
+        return ['series', 'tv'];
+    }
+
+    return normalized ? [normalized] : [];
+}
+
+function getResourceName(resource) {
+    if (typeof resource === 'string') {
+        return resource;
+    }
+
+    return resource && resource.name ? resource.name : '';
+}
+
+function getResourceTypes(resource) {
+    if (typeof resource === 'string') {
+        return [];
+    }
+
+    return resource && Array.isArray(resource.types)
+        ? resource.types.map(function(value) {
+            return normalizeAddonType(value);
+        }).filter(Boolean)
+        : [];
+}
+
+function getResourceIdPrefixes(resource) {
+    if (typeof resource === 'string') {
+        return [];
+    }
+
+    return resource && Array.isArray(resource.idPrefixes)
+        ? resource.idPrefixes.filter(Boolean)
+        : [];
+}
+
+function addonSupportsResource(addon, resourceNames, type, id) {
+    var resources = addon && addon.manifest && addon.manifest.resources;
+    var compatibleTypes = getCompatibleTypes(type);
+
+    if (!resources || !resources.length) {
+        return false;
+    }
+
+    return resources.some(function(resource) {
+        var resourceName = String(getResourceName(resource) || '').toLowerCase();
+        var resourceTypes = getResourceTypes(resource);
+        var idPrefixes = getResourceIdPrefixes(resource);
+
+        if (resourceNames.indexOf(resourceName) === -1) {
+            return false;
+        }
+        if (compatibleTypes.length && resourceTypes.length) {
+            return compatibleTypes.some(function(candidate) {
+                return resourceTypes.indexOf(candidate) !== -1;
+            });
+        }
+        if (idPrefixes.length && id) {
+            return idPrefixes.some(function(prefix) {
+                return String(id).indexOf(prefix) === 0;
+            });
+        }
+
+        return true;
+    });
+}
+
 function updateUserPanel() {
     var email = state.user && state.user.email ? state.user.email : 'Guest';
-    var authKey = state.authKey ? state.authKey : 'Not set';
+    var authKey = maskToken(state.authKey);
 
     byId('sideUserLabel').textContent = email;
     byId('topAccountLabel').textContent = email;
     byId('accountEmail').textContent = email;
     byId('authKeyLabel').textContent = authKey;
     byId('accountNote').textContent = state.authKey
-        ? 'This Stremio session is stored locally on the TV shell.'
-        : 'Sign in to keep your Stremio session active inside this TV shell.';
+        ? 'This Nuvio session is stored locally on the TV shell.'
+        : 'Sign in to keep your Nuvio session active inside this TV shell.';
 }
 
 function cloneContinueItem(item) {
@@ -366,6 +464,36 @@ function normalizeTrackLabel(type, info, index) {
     }
 
     return (type === 'audio' ? 'Audio ' : 'Subtitle ') + (index + 1);
+}
+
+function isEnglishSubtitleValue(value) {
+    var normalized = String(value || '').toLowerCase().replace(/\s+/g, ' ').trim();
+
+    if (!normalized) {
+        return false;
+    }
+
+    return normalized === 'en'
+        || normalized === 'eng'
+        || normalized.indexOf('en-') === 0
+        || normalized.indexOf('en_') === 0
+        || normalized.indexOf('eng-') === 0
+        || normalized.indexOf('eng_') === 0
+        || normalized.indexOf('english') !== -1;
+}
+
+function isEnglishSubtitleEntry(info) {
+    if (!info || typeof info !== 'object') {
+        return false;
+    }
+
+    return isEnglishSubtitleValue(info.language)
+        || isEnglishSubtitleValue(info.lang)
+        || isEnglishSubtitleValue(info.track_lang)
+        || isEnglishSubtitleValue(info.subtitle_lang)
+        || isEnglishSubtitleValue(info.label)
+        || isEnglishSubtitleValue(info.track_name)
+        || isEnglishSubtitleValue(info.name);
 }
 
 function isExternalSubtitleTrackId(trackId) {
@@ -629,6 +757,9 @@ function getExternalSubtitleTracks(stream) {
         var language = track.lang || track.language || '';
         var label = track.label || track.name || track.lang || '';
         if (!url) {
+            return null;
+        }
+        if (!isEnglishSubtitleEntry(track)) {
             return null;
         }
         return {
@@ -1091,6 +1222,12 @@ function refreshHtml5Tracks() {
         for (index = 0; index < textTracks.length; index += 1) {
             var textTrackLanguage = textTracks[index].language || '';
             var textTrackLabel = textTracks[index].label || '';
+            if (!isEnglishSubtitleEntry({
+                language: textTrackLanguage,
+                label: textTrackLabel
+            })) {
+                continue;
+            }
             nextSubs.push({
                 id: 'subtitle-' + index,
                 index: index,
@@ -1153,6 +1290,9 @@ function refreshAvplayTracks() {
         }
 
         if (trackInfo.type === 'TEXT' || trackInfo.type === 'SUBTITLE') {
+            if (!isEnglishSubtitleEntry(info)) {
+                return;
+            }
             trackId = 'subtitle-' + trackInfo.index;
             nextSubs.push({
                 id: trackId,
@@ -2266,7 +2406,7 @@ function updateFeatured(item, kind) {
     byId('featuredDescription').textContent =
         item.description ||
         item.releaseInfo ||
-        'Live Cinemeta metadata is connected. This item is being used as the featured spotlight.';
+        'Linked addon metadata is connected. This item is being used as the featured spotlight.';
 
     if (posterUrl) {
         poster.style.backgroundImage = '';
@@ -2298,6 +2438,340 @@ function normalizeCatalogPayloadWithLimit(payload, limit) {
         return [];
     }
     return payload.metas.slice(0, typeof limit === 'number' ? limit : 12);
+}
+
+function uniqueCatalogItems(items, limit) {
+    var seen = {};
+    var output = [];
+
+    (items || []).forEach(function(item) {
+        var key;
+
+        if (!item || !item.id) {
+            return;
+        }
+
+        key = item.id;
+        if (seen[key]) {
+            return;
+        }
+
+        seen[key] = true;
+        output.push(item);
+    });
+
+    if (typeof limit === 'number') {
+        return output.slice(0, limit);
+    }
+
+    return output;
+}
+
+function canonicalizeAddonUrl(url) {
+    var value = String(url || '').trim().replace(/\/+$/, '');
+
+    if (value.slice(-14) === '/manifest.json') {
+        return value.slice(0, -14);
+    }
+
+    return value;
+}
+
+function buildAddonTransportUrl(baseUrl) {
+    var cleanBaseUrl = canonicalizeAddonUrl(baseUrl);
+
+    return cleanBaseUrl ? cleanBaseUrl + '/manifest.json' : '';
+}
+
+function buildBuiltinAddonManifest(baseUrl) {
+    var cleanBaseUrl = canonicalizeAddonUrl(baseUrl);
+
+    if (cleanBaseUrl === CINEMETA_BASE) {
+        return {
+            id: 'org.cinemeta',
+            name: 'Cinemeta',
+            version: 'fallback',
+            description: 'Fallback Cinemeta manifest',
+            resources: [
+                { name: 'catalog', types: ['movie', 'series'] },
+                { name: 'meta', types: ['movie', 'series'] }
+            ],
+            types: ['movie', 'series'],
+            catalogs: [
+                {
+                    type: 'movie',
+                    id: 'top',
+                    name: 'Top',
+                    extra: [{ name: 'search' }, { name: 'skip' }]
+                },
+                {
+                    type: 'series',
+                    id: 'top',
+                    name: 'Top',
+                    extra: [{ name: 'search' }, { name: 'skip' }]
+                }
+            ]
+        };
+    }
+
+    if (cleanBaseUrl === OPENSUBTITLES_BASE) {
+        return {
+            id: 'org.opensubtitles.v3',
+            name: 'OpenSubtitles v3',
+            version: 'fallback',
+            description: 'Fallback OpenSubtitles manifest',
+            resources: [
+                { name: 'subtitles', types: ['movie', 'series'] }
+            ],
+            types: ['movie', 'series'],
+            catalogs: []
+        };
+    }
+
+    return null;
+}
+
+function normalizeAddonManifest(baseUrl, manifest) {
+    var rawTypes = Array.isArray(manifest && manifest.types) ? manifest.types : [];
+    var cleanBaseUrl = canonicalizeAddonUrl(baseUrl);
+    var types = rawTypes.map(function(value) {
+        return normalizeAddonType(value);
+    }).filter(Boolean);
+    var resources = Array.isArray(manifest && manifest.resources) ? manifest.resources : [];
+    var catalogs = Array.isArray(manifest && manifest.catalogs) ? manifest.catalogs : [];
+
+    return {
+        id: manifest && manifest.id ? manifest.id : cleanBaseUrl,
+        transportUrl: buildAddonTransportUrl(cleanBaseUrl),
+        manifest: {
+            id: manifest && manifest.id ? manifest.id : cleanBaseUrl,
+            name: manifest && manifest.name ? manifest.name : cleanBaseUrl,
+            version: manifest && manifest.version ? manifest.version : '0.0.0',
+            description: manifest && manifest.description ? manifest.description : '',
+            logo: manifest && manifest.logo ? manifest.logo : null,
+            types: types,
+            resources: resources.map(function(resource) {
+                if (typeof resource === 'string') {
+                    return {
+                        name: resource,
+                        types: types.slice(),
+                        idPrefixes: null
+                    };
+                }
+
+                return {
+                    name: resource && resource.name ? resource.name : '',
+                    types: Array.isArray(resource && resource.types)
+                        ? resource.types.map(function(value) {
+                            return normalizeAddonType(value);
+                        }).filter(Boolean)
+                        : types.slice(),
+                    idPrefixes: Array.isArray(resource && resource.idPrefixes)
+                        ? resource.idPrefixes.filter(Boolean)
+                        : null
+                };
+            }),
+            catalogs: catalogs.map(function(catalog) {
+                return {
+                    id: catalog && catalog.id ? catalog.id : '',
+                    type: normalizeAddonType(catalog && catalog.type ? catalog.type : ''),
+                    name: catalog && catalog.name ? catalog.name : (catalog && catalog.id ? catalog.id : 'Catalog'),
+                    extra: Array.isArray(catalog && catalog.extra) ? catalog.extra : []
+                };
+            })
+        }
+    };
+}
+
+function buildSupabaseHeaders(token) {
+    return {
+        apikey: SUPABASE_ANON_KEY,
+        Authorization: 'Bearer ' + (token || SUPABASE_ANON_KEY)
+    };
+}
+
+function extractAddonUrls(rows) {
+    return (rows || []).map(function(row) {
+        return row && (row.url || row.base_url) ? row.url || row.base_url : null;
+    }).filter(Boolean);
+}
+
+function isMissingSupabaseResource(error) {
+    var message = String(error && error.message || '');
+
+    return message.indexOf('PGRST205') !== -1
+        || message.indexOf('PGRST202') !== -1
+        || message.indexOf('Could not find the table') !== -1
+        || message.indexOf('Could not find the function') !== -1
+        || message.indexOf('HTTP 404') === 0;
+}
+
+function buildCatalogOptionKey(addon, catalog) {
+    return [
+        addonBaseUrl(addon.transportUrl) || addon.id || '',
+        normalizeAddonType(catalog.type),
+        catalog.id || '',
+        catalog.name || ''
+    ].join('::');
+}
+
+function buildCatalogOptions(type) {
+    var options = [];
+    var labelCounts = {};
+    var preferredTypes = getCompatibleTypes(type);
+
+    state.addons.forEach(function(addon) {
+        var catalogs = addon && addon.manifest && Array.isArray(addon.manifest.catalogs)
+            ? addon.manifest.catalogs
+            : [];
+        var addonName = addon && addon.manifest && addon.manifest.name ? addon.manifest.name : 'Addon';
+
+        if (!addonSupportsResource(addon, ['catalog'], type)) {
+            return;
+        }
+
+        catalogs.forEach(function(catalog) {
+            var catalogType = normalizeAddonType(catalog && catalog.type);
+            var extra = Array.isArray(catalog && catalog.extra) ? catalog.extra : [];
+            var label;
+
+            if (!catalog || !catalog.id || preferredTypes.indexOf(catalogType) === -1) {
+                return;
+            }
+
+            label = catalog.name || catalog.id;
+            labelCounts[label] = (labelCounts[label] || 0) + 1;
+
+            options.push({
+                key: buildCatalogOptionKey(addon, catalog),
+                label: label,
+                addonName: addonName,
+                addon: addon,
+                type: catalogType,
+                catalogId: catalog.id,
+                supportsSearch: extra.some(function(entry) {
+                    return entry && entry.name === 'search';
+                }),
+                supportsSkip: extra.some(function(entry) {
+                    return entry && entry.name === 'skip';
+                })
+            });
+        });
+    });
+
+    return options.map(function(option) {
+        var nextOption = {
+            key: option.key,
+            label: option.label,
+            addonName: option.addonName,
+            addon: option.addon,
+            type: option.type,
+            catalogId: option.catalogId,
+            supportsSearch: option.supportsSearch,
+            supportsSkip: option.supportsSkip
+        };
+
+        if (labelCounts[option.label] > 1) {
+            nextOption.label = option.label + ' • ' + option.addonName;
+        }
+
+        return nextOption;
+    });
+}
+
+function selectPreferredCatalogOption(options) {
+    var ranked = (options || []).slice();
+
+    ranked.sort(function(left, right) {
+        function score(option) {
+            var baseUrl = option && option.addon ? addonBaseUrl(option.addon.transportUrl) : '';
+            var value = 0;
+
+            if (baseUrl === CINEMETA_BASE && option.catalogId === 'top') {
+                value += 20;
+            }
+            if (option.catalogId === 'top') {
+                value += 10;
+            }
+            if (String(option.label || '').toLowerCase().indexOf('top') !== -1) {
+                value += 4;
+            }
+            if (option.supportsSearch) {
+                value += 2;
+            }
+
+            return value;
+        }
+
+        return score(right) - score(left);
+    });
+
+    return ranked[0] || null;
+}
+
+function getBrowseOptions(type) {
+    return type === 'movie' ? state.movieGenres : state.seriesGenres;
+}
+
+function getSelectedBrowseKey(type) {
+    return type === 'movie' ? state.selectedMovieGenre : state.selectedSeriesGenre;
+}
+
+function setSelectedBrowseKey(type, key) {
+    if (type === 'movie') {
+        state.selectedMovieGenre = key;
+        return;
+    }
+
+    state.selectedSeriesGenre = key;
+}
+
+function getSelectedBrowseOption(type) {
+    var options = getBrowseOptions(type);
+    var key = getSelectedBrowseKey(type);
+    var selected = options.filter(function(option) {
+        return option.key === key;
+    })[0];
+
+    return selected || options[0] || null;
+}
+
+function getSelectedBrowseLabel(type) {
+    var selected = getSelectedBrowseOption(type);
+
+    return selected ? selected.label : 'Unavailable';
+}
+
+function buildCatalogRequestUrl(option, skip, extraArgs) {
+    var baseUrl = option && option.addon ? addonBaseUrl(option.addon.transportUrl) : '';
+    var args = extraArgs || {};
+    var parts;
+
+    if (!baseUrl || !option) {
+        return '';
+    }
+    if (!args || !Object.keys(args).length) {
+        return skip > 0 && option.supportsSkip
+            ? baseUrl + '/catalog/' + encodeURIComponent(option.type) + '/' + encodeURIComponent(option.catalogId) + '/skip=' + skip + '.json'
+            : baseUrl + '/catalog/' + encodeURIComponent(option.type) + '/' + encodeURIComponent(option.catalogId) + '.json';
+    }
+
+    if (skip > 0 && option.supportsSkip && typeof args.skip === 'undefined') {
+        args.skip = String(skip);
+    }
+
+    parts = Object.keys(args).map(function(name) {
+        return encodeURIComponent(name) + '=' + encodeURIComponent(String(args[name]));
+    });
+
+    return baseUrl
+        + '/catalog/'
+        + encodeURIComponent(option.type)
+        + '/'
+        + encodeURIComponent(option.catalogId)
+        + '/'
+        + parts.join('&')
+        + '.json';
 }
 
 function normalizeHttpError(error) {
@@ -2415,79 +2889,265 @@ function requestJsonWithHeaders(url, method, body, headers) {
     });
 }
 
-function fetchCatalogManifest() {
-    return requestJson(CINEMETA_BASE + '/manifest.json', 'GET').then(function(manifest) {
-        var movieCatalog;
-        var seriesCatalog;
-        var movieGenres;
-        var seriesGenres;
+function requestSupabaseAuth(path, method, body) {
+    return requestJsonWithHeaders(
+        SUPABASE_URL + path,
+        method || 'GET',
+        body,
+        {
+            apikey: SUPABASE_ANON_KEY
+        }
+    );
+}
 
-        if (!manifest || !manifest.catalogs) {
-            return;
+function requestSupabaseWithToken(path, method, body, token) {
+    return requestJsonWithHeaders(
+        SUPABASE_URL + path,
+        method || 'GET',
+        body,
+        buildSupabaseHeaders(token)
+    );
+}
+
+function requestSupabaseWithSession(path, method, body) {
+    return requestSupabaseWithToken(path, method, body, state.authKey).catch(function(error) {
+        if (!state.refreshToken || error.message.indexOf('HTTP 401') !== 0) {
+            throw error;
         }
 
-        movieCatalog = manifest.catalogs.filter(function(catalog) {
-            return catalog.type === 'movie' && catalog.id === 'top';
-        })[0];
-        seriesCatalog = manifest.catalogs.filter(function(catalog) {
-            return catalog.type === 'series' && catalog.id === 'top';
-        })[0];
+        return refreshSessionIfNeeded().then(function(refreshed) {
+            if (!refreshed) {
+                throw error;
+            }
 
-        movieGenres = ['Top'].concat(movieCatalog && movieCatalog.genres ? movieCatalog.genres.slice(0, 12) : FALLBACK_MOVIE_GENRES.slice(1));
-        seriesGenres = ['Top'].concat(seriesCatalog && seriesCatalog.genres ? seriesCatalog.genres.slice(0, 12) : FALLBACK_SERIES_GENRES.slice(1));
-
-        state.movieGenres = uniqueList(movieGenres);
-        state.seriesGenres = uniqueList(seriesGenres);
-        renderBrowseGenreRows();
-    }).catch(function() {
-        state.movieGenres = FALLBACK_MOVIE_GENRES.slice();
-        state.seriesGenres = FALLBACK_SERIES_GENRES.slice();
-        renderBrowseGenreRows();
+            return requestSupabaseWithToken(path, method, body, state.authKey);
+        });
     });
 }
 
-function catalogUrl(type, genre, skip) {
-    var extras = [];
-
-    if (genre && genre !== 'Top') {
-        extras.push('genre=' + encodeURIComponent(genre));
-    }
-    if (skip && skip > 0) {
-        extras.push('skip=' + skip);
+function fetchCurrentSupabaseUser() {
+    if (!state.authKey) {
+        return Promise.resolve(null);
     }
 
-    return CINEMETA_BASE + '/catalog/' + type + '/top' + (extras.length ? '/' + extras.join('&') : '') + '.json';
+    return requestSupabaseWithSession('/auth/v1/user', 'GET').then(function(payload) {
+        return payload && payload.user ? payload.user : payload;
+    });
+}
+
+function fetchCurrentSupabaseUserForToken(token) {
+    if (!token) {
+        return Promise.resolve(null);
+    }
+
+    return requestSupabaseWithToken('/auth/v1/user', 'GET', null, token).then(function(payload) {
+        return payload && payload.user ? payload.user : payload;
+    }).catch(function() {
+        return null;
+    });
+}
+
+function fetchEffectiveOwnerId() {
+    if (!state.authKey) {
+        state.ownerId = null;
+        return Promise.resolve(null);
+    }
+    if (state.ownerId) {
+        return Promise.resolve(state.ownerId);
+    }
+
+    return requestSupabaseWithSession('/rest/v1/rpc/get_sync_owner', 'POST', {}).then(function(payload) {
+        state.ownerId = payload;
+        return payload;
+    });
+}
+
+function fetchAddonUrlsFromNuvio() {
+    if (!state.authKey) {
+        return Promise.resolve(DEFAULT_ADDON_URLS.slice());
+    }
+
+    return fetchEffectiveOwnerId().then(function(ownerId) {
+        if (!ownerId) {
+            return DEFAULT_ADDON_URLS.slice();
+        }
+
+        return requestSupabaseWithSession(
+            '/rest/v1/addons?user_id=eq.' + encodeURIComponent(ownerId) + '&profile_id=eq.1&select=url,sort_order&order=sort_order.asc',
+            'GET'
+        ).then(function(rows) {
+            var urls = extractAddonUrls(rows);
+
+            if (urls.length) {
+                return urls;
+            }
+
+            return DEFAULT_ADDON_URLS.slice();
+        }).catch(function(error) {
+            if (!isMissingSupabaseResource(error)) {
+                throw error;
+            }
+
+            return requestSupabaseWithSession(
+                '/rest/v1/tv_addons?owner_id=eq.' + encodeURIComponent(ownerId) + '&select=base_url,position&order=position.asc',
+                'GET'
+            ).then(function(rows) {
+                var urls = extractAddonUrls(rows);
+
+                if (urls.length) {
+                    return urls;
+                }
+
+                return DEFAULT_ADDON_URLS.slice();
+            }).catch(function(tvError) {
+                if (!isMissingSupabaseResource(tvError)) {
+                    throw tvError;
+                }
+
+                return requestSupabaseWithSession('/rest/v1/rpc/sync_pull_addons', 'POST', {
+                    p_profile_id: 1
+                }).then(function(rows) {
+                    var urls = extractAddonUrls(rows);
+
+                    if (urls.length) {
+                        return urls;
+                    }
+
+                    return DEFAULT_ADDON_URLS.slice();
+                }).catch(function() {
+                    return DEFAULT_ADDON_URLS.slice();
+                });
+            });
+        });
+    });
+}
+
+function fetchAddonDefinition(baseUrl) {
+    var cleanBaseUrl = canonicalizeAddonUrl(baseUrl);
+
+    if (!cleanBaseUrl) {
+        return Promise.resolve(null);
+    }
+
+    return requestJson(buildAddonTransportUrl(cleanBaseUrl), 'GET').catch(function() {
+        var fallback = buildBuiltinAddonManifest(cleanBaseUrl);
+
+        if (!fallback) {
+            return null;
+        }
+
+        return fallback;
+    }).then(function(manifest) {
+        if (!manifest) {
+            return null;
+        }
+
+        return normalizeAddonManifest(cleanBaseUrl, manifest);
+    });
+}
+
+function refreshSessionIfNeeded() {
+    if (!state.authKey && !state.refreshToken) {
+        return Promise.resolve(false);
+    }
+
+    if (!state.refreshToken) {
+        return fetchCurrentSupabaseUserForToken(state.authKey).then(function(user) {
+            if (user) {
+                state.user = user;
+                localStorage.setItem(STORAGE_USER, JSON.stringify(user));
+                updateUserPanel();
+                return true;
+            }
+
+            return false;
+        }).catch(function() {
+            return false;
+        });
+    }
+
+    return requestSupabaseAuth('/auth/v1/token?grant_type=refresh_token', 'POST', {
+        refresh_token: state.refreshToken
+    }).then(function(payload) {
+        if (!payload || !payload.access_token) {
+            throw new Error('No access token returned');
+        }
+
+        state.authKey = payload.access_token;
+        state.refreshToken = payload.refresh_token || state.refreshToken;
+        localStorage.setItem(STORAGE_AUTH, state.authKey);
+        if (state.refreshToken) {
+            localStorage.setItem(STORAGE_REFRESH, state.refreshToken);
+        }
+        state.ownerId = null;
+
+        return fetchCurrentSupabaseUserForToken(state.authKey).then(function(user) {
+            if (user) {
+                state.user = user;
+                localStorage.setItem(STORAGE_USER, JSON.stringify(user));
+            }
+            updateUserPanel();
+            return true;
+        });
+    }).catch(function() {
+        storeSession(null, null, null);
+        return false;
+    });
+}
+
+function fetchCatalogManifest() {
+    var movieOptions = buildCatalogOptions('movie');
+    var seriesOptions = buildCatalogOptions('series');
+    var selectedMovie = getSelectedBrowseOption('movie');
+    var selectedSeries = getSelectedBrowseOption('series');
+    var preferredMovie = selectedMovie && movieOptions.some(function(option) {
+        return option.key === selectedMovie.key;
+    }) ? selectedMovie : selectPreferredCatalogOption(movieOptions);
+    var preferredSeries = selectedSeries && seriesOptions.some(function(option) {
+        return option.key === selectedSeries.key;
+    }) ? selectedSeries : selectPreferredCatalogOption(seriesOptions);
+
+    state.movieGenres = movieOptions;
+    state.seriesGenres = seriesOptions;
+    setSelectedBrowseKey('movie', preferredMovie ? preferredMovie.key : '');
+    setSelectedBrowseKey('series', preferredSeries ? preferredSeries.key : '');
+    renderBrowseGenreRows();
+
+    return Promise.resolve({
+        movies: movieOptions,
+        series: seriesOptions
+    });
 }
 
 function renderBrowseGenreRows() {
-    function renderRow(containerId, genres, active, onSelect) {
+    function renderRow(containerId, options, activeKey, onSelect) {
         var container = byId(containerId);
         container.innerHTML = '';
 
-        genres.forEach(function(genre) {
+        options.forEach(function(option) {
             var button = document.createElement('button');
             button.className = 'genre-chip';
             button.type = 'button';
             button.setAttribute('tabindex', '-1');
-            if (genre === active) {
+            if (option.key === activeKey) {
                 button.classList.add('is-selected');
             }
-            button.textContent = genre;
+            button.textContent = option.label;
             button.addEventListener('click', function() {
-                onSelect(genre);
+                onSelect(option);
             });
             container.appendChild(button);
         });
     }
 
-    renderRow('movieGenreRow', state.movieGenres, state.selectedMovieGenre, function(genre) {
-        state.selectedMovieGenre = genre;
+    renderRow('movieGenreRow', state.movieGenres, state.selectedMovieGenre, function(option) {
+        setSelectedBrowseKey('movie', option.key);
         state.movieSkip = 0;
         fetchBrowseCatalog('movie', false);
     });
 
-    renderRow('seriesGenreRow', state.seriesGenres, state.selectedSeriesGenre, function(genre) {
-        state.selectedSeriesGenre = genre;
+    renderRow('seriesGenreRow', state.seriesGenres, state.selectedSeriesGenre, function(option) {
+        setSelectedBrowseKey('series', option.key);
         state.seriesSkip = 0;
         fetchBrowseCatalog('series', false);
     });
@@ -2497,26 +3157,41 @@ function renderBrowseViews() {
     renderCardRows('movieGrid', state.movieBrowseItems, 'movie', 4);
     renderCardRows('seriesGrid', state.seriesBrowseItems, 'series', 4);
 
-    byId('movieCount').textContent = state.movieBrowseItems.length + ' loaded • ' + state.selectedMovieGenre;
-    byId('seriesCount').textContent = state.seriesBrowseItems.length + ' loaded • ' + state.selectedSeriesGenre;
+    byId('movieCount').textContent = state.movieBrowseItems.length + ' loaded • ' + getSelectedBrowseLabel('movie');
+    byId('seriesCount').textContent = state.seriesBrowseItems.length + ' loaded • ' + getSelectedBrowseLabel('series');
     renderBrowseGenreRows();
 }
 
 function fetchBrowseCatalog(type, append) {
-    var genre = type === 'movie' ? state.selectedMovieGenre : state.selectedSeriesGenre;
+    var option = getSelectedBrowseOption(type);
     var skip = type === 'movie' ? state.movieSkip : state.seriesSkip;
+
+    if (!option) {
+        if (type === 'movie') {
+            state.movieBrowseItems = [];
+        } else {
+            state.seriesBrowseItems = [];
+        }
+        renderBrowseViews();
+        updateConnectionStatus('No addon catalogs are available for ' + type + '.', false, true);
+        return Promise.resolve();
+    }
+    if (append && skip > 0 && !option.supportsSkip) {
+        updateConnectionStatus('This catalog does not support loading more items.', false, true);
+        return Promise.resolve();
+    }
 
     updateConnectionStatus('Loading ' + type + ' browse...', false, false);
 
-    return requestJson(catalogUrl(type, genre, skip), 'GET').then(function(payload) {
-        var items = normalizeCatalogPayloadWithLimit(payload, 24);
+    return requestJson(buildCatalogRequestUrl(option, skip), 'GET').then(function(payload) {
+        var items = uniqueCatalogItems(normalizeCatalogPayloadWithLimit(payload, 24), 24);
         if (type === 'movie') {
             state.movieBrowseItems = append ? state.movieBrowseItems.concat(items) : items;
         } else {
             state.seriesBrowseItems = append ? state.seriesBrowseItems.concat(items) : items;
         }
         renderBrowseViews();
-        updateConnectionStatus('Cinemeta connected', true, false);
+        updateConnectionStatus('Addon catalogs ready', true, false);
         if ((type === 'movie' && state.currentView === 'movies') || (type === 'series' && state.currentView === 'series')) {
             setTimeout(focusCurrent, 0);
         }
@@ -2528,19 +3203,34 @@ function fetchBrowseCatalog(type, append) {
 function fetchCatalogs() {
     updateConnectionStatus('Loading catalogs...', false, false);
 
-    return Promise.all([
-        requestJson(CINEMETA_BASE + '/catalog/movie/top.json', 'GET'),
-        requestJson(CINEMETA_BASE + '/catalog/series/top.json', 'GET')
-    ]).then(function(results) {
-        state.movies = normalizeCatalogPayload(results[0]);
-        state.series = normalizeCatalogPayload(results[1]);
-        renderCatalogViews();
-        return Promise.all([
-            fetchCatalogManifest(),
-            fetchBrowseCatalog('movie', false),
-            fetchBrowseCatalog('series', false)
-        ]).then(function() {
-            updateConnectionStatus('Cinemeta connected', true, false);
+    return fetchCatalogManifest().then(function() {
+        var movieOption = getSelectedBrowseOption('movie');
+        var seriesOption = getSelectedBrowseOption('series');
+        var movieRequest = movieOption
+            ? requestJson(buildCatalogRequestUrl(movieOption, 0), 'GET').catch(function() {
+                return { metas: [] };
+            })
+            : Promise.resolve({ metas: [] });
+        var seriesRequest = seriesOption
+            ? requestJson(buildCatalogRequestUrl(seriesOption, 0), 'GET').catch(function() {
+                return { metas: [] };
+            })
+            : Promise.resolve({ metas: [] });
+
+        return Promise.all([movieRequest, seriesRequest]).then(function(results) {
+            state.movies = uniqueCatalogItems(normalizeCatalogPayload(results[0]), 12);
+            state.series = uniqueCatalogItems(normalizeCatalogPayload(results[1]), 12);
+            state.movieBrowseItems = uniqueCatalogItems(normalizeCatalogPayloadWithLimit(results[0], 24), 24);
+            state.seriesBrowseItems = uniqueCatalogItems(normalizeCatalogPayloadWithLimit(results[1], 24), 24);
+            renderCatalogViews();
+            renderBrowseViews();
+
+            if (!state.movies.length && !state.series.length) {
+                updateConnectionStatus('No addon catalogs are available yet.', false, true);
+                return;
+            }
+
+            updateConnectionStatus('Addon catalogs ready', true, false);
             focusCurrent();
         });
     }).catch(function(error) {
@@ -2629,7 +3319,7 @@ function renderQrLoginSignedIn() {
         code.textContent = 'TV already connected';
     }
     setQrExpiryMessage('Use Refresh QR to connect a different account from your phone.');
-    setQrLoginMessage('QR login is available, but this TV already has a Stremio session.', 'success');
+    setQrLoginMessage('QR login is available, but this TV already has a Nuvio session.', 'success');
 }
 
 function renderQrLoginPlaceholder(codeText, expiryText, helperText, tone) {
@@ -2658,7 +3348,7 @@ function renderQrLoginSession(session) {
     if (code) {
         code.textContent = 'Code: ' + session.code;
     }
-    setQrLoginMessage('Scan the QR code with your phone and approve the Stremio sign-in.', null);
+    setQrLoginMessage('Scan the QR code with your phone and approve the Nuvio sign-in.', null);
 }
 
 function refreshQrCountdown() {
@@ -2699,7 +3389,7 @@ function ensureQrAnonymousSession() {
 
     return requestJsonWithHeaders(SUPABASE_URL + '/auth/v1/signup', 'POST', {
         data: {
-            tv_client: 'stremio-test'
+            tv_client: 'nuvio-tv-shell'
         }
     }, baseHeaders).catch(function() {
         return requestJsonWithHeaders(SUPABASE_URL + '/auth/v1/token?grant_type=anonymous', 'POST', {}, baseHeaders);
@@ -2723,7 +3413,7 @@ function startQrRpc(deviceNonce, includeDeviceName) {
     };
 
     if (includeDeviceName) {
-        body.p_device_name = 'StremioTest TV';
+        body.p_device_name = 'Nuvio TV Shell';
     }
 
     return requestJsonWithHeaders(
@@ -2742,15 +3432,16 @@ function extractQrApprovedSession(result) {
         result && result.data,
         result && result.result,
         result && result.session,
-        result && result.stremio,
-        result && result.stremioSession,
-        result && result.stremio_session,
+        result && result.nuvio,
+        result && result.nuvioSession,
+        result && result.nuvio_session,
         result && result.credentials
     ];
     var found = null;
 
     candidates.some(function(candidate) {
-        var authKey;
+        var accessToken;
+        var refreshToken;
         var user;
 
         if (Array.isArray(candidate)) {
@@ -2760,28 +3451,39 @@ function extractQrApprovedSession(result) {
             return false;
         }
 
-        authKey = candidate.authKey
+        accessToken = candidate.accessToken
+            || candidate.access_token
+            || candidate.authKey
             || candidate.auth_key
-            || candidate.stremioAuthKey
-            || candidate.stremio_auth_key
-            || (candidate.stremio && candidate.stremio.authKey)
-            || (candidate.stremio && candidate.stremio.auth_key)
-            || (candidate.credentials && candidate.credentials.authKey)
-            || (candidate.credentials && candidate.credentials.auth_key)
+            || (candidate.session && candidate.session.access_token)
+            || (candidate.nuvio && candidate.nuvio.accessToken)
+            || (candidate.nuvio && candidate.nuvio.access_token)
+            || (candidate.credentials && candidate.credentials.accessToken)
+            || (candidate.credentials && candidate.credentials.access_token)
+            || null;
+        refreshToken = candidate.refreshToken
+            || candidate.refresh_token
+            || (candidate.session && candidate.session.refresh_token)
+            || (candidate.nuvio && candidate.nuvio.refreshToken)
+            || (candidate.nuvio && candidate.nuvio.refresh_token)
+            || (candidate.credentials && candidate.credentials.refreshToken)
+            || (candidate.credentials && candidate.credentials.refresh_token)
             || null;
         user = candidate.user
-            || candidate.stremioUser
-            || candidate.stremio_user
-            || (candidate.stremio && candidate.stremio.user)
+            || candidate.profile
+            || candidate.nuvioUser
+            || candidate.nuvio_user
+            || (candidate.nuvio && candidate.nuvio.user)
             || (candidate.credentials && candidate.credentials.user)
             || null;
 
-        if (!authKey) {
+        if (!accessToken) {
             return false;
         }
 
         found = {
-            authKey: authKey,
+            accessToken: accessToken,
+            refreshToken: refreshToken,
             user: user || null
         };
         return true;
@@ -2795,9 +3497,7 @@ function resolveQrApprovedUser(session) {
         return Promise.resolve(session.user);
     }
 
-    return requestJson(API_BASE + '/api/getUser', 'POST', {
-        authKey: session.authKey
-    }).then(function(payload) {
+    return requestSupabaseWithToken('/auth/v1/user', 'GET', null, session.accessToken).then(function(payload) {
         return payload && payload.user ? payload.user : payload;
     }).catch(function() {
         return null;
@@ -2839,16 +3539,18 @@ function exchangeQrLoginSession(sessionId) {
             return null;
         }
 
-        if (!session || !session.authKey) {
-            throw new Error('QR sign-in completed, but no Stremio auth key was returned');
+        if (!session || !session.accessToken) {
+            throw new Error('QR sign-in completed, but no Nuvio session token was returned');
         }
 
         return resolveQrApprovedUser(session).then(function(user) {
-            storeSession(session.authKey, user || session.user || null);
+            storeSession(session.accessToken, session.refreshToken || null, user || session.user || null);
             updateSessionStatus('Signed in', true, false);
             setLoginMessage('Signed in successfully via QR code.', 'success');
             renderQrLoginSignedIn();
             return fetchInstalledAddons().then(function() {
+                return fetchCatalogs();
+            }).then(function() {
                 setView('home', {
                     focusRegion: 'main',
                     resetMain: true
@@ -2988,14 +3690,22 @@ function startQrLoginSession(forceRefresh) {
     });
 }
 
-function storeSession(authKey, user) {
+function storeSession(authKey, refreshToken, user) {
     state.authKey = authKey || null;
+    state.refreshToken = refreshToken || null;
     state.user = user || null;
+    state.ownerId = null;
 
     if (state.authKey) {
         localStorage.setItem(STORAGE_AUTH, state.authKey);
     } else {
         localStorage.removeItem(STORAGE_AUTH);
+    }
+
+    if (state.refreshToken) {
+        localStorage.setItem(STORAGE_REFRESH, state.refreshToken);
+    } else {
+        localStorage.removeItem(STORAGE_REFRESH);
     }
 
     if (state.user) {
@@ -3022,6 +3732,7 @@ function storeSession(authKey, user) {
 
 function restoreStoredSession() {
     var authKey = localStorage.getItem(STORAGE_AUTH);
+    var refreshToken = localStorage.getItem(STORAGE_REFRESH);
     var user = null;
 
     try {
@@ -3032,6 +3743,7 @@ function restoreStoredSession() {
 
     if (authKey) {
         state.authKey = authKey;
+        state.refreshToken = refreshToken || null;
         state.user = user;
         updateSessionStatus('Stored session found', true, false);
     } else {
@@ -3044,16 +3756,20 @@ function verifyStoredSession() {
         return Promise.resolve();
     }
 
-    return requestJson(API_BASE + '/api/getUser', 'POST', {
-        authKey: state.authKey
+    return refreshSessionIfNeeded().then(function(isValid) {
+        if (!isValid) {
+            throw new Error('Stored session expired');
+        }
+
+        return fetchCurrentSupabaseUser();
     }).then(function(payload) {
-        state.user = payload && payload.user ? payload.user : payload;
+        state.user = payload || null;
         localStorage.setItem(STORAGE_USER, JSON.stringify(state.user));
         updateUserPanel();
         updateSessionStatus('Signed in', true, false);
-        setLoginMessage('Restored existing Stremio session.', 'success');
+        setLoginMessage('Restored existing Nuvio session.', 'success');
     }).catch(function() {
-        storeSession(null, null);
+        storeSession(null, null, null);
         updateSessionStatus('Stored session expired', false, true);
         setLoginMessage('Stored session was invalid. Sign in again.', 'error');
     });
@@ -3062,130 +3778,93 @@ function verifyStoredSession() {
 function login(email, password) {
     setLoginMessage('Signing in...', null);
 
-    return requestJson(API_BASE + '/api/login', 'POST', {
+    return requestSupabaseAuth('/auth/v1/token?grant_type=password', 'POST', {
         email: email,
         password: password
     }).then(function(payload) {
-        if (!payload || !payload.authKey) {
-            throw new Error('No auth key returned');
+        if (!payload || !payload.access_token) {
+            throw new Error('No access token returned');
         }
 
-        storeSession(payload.authKey, payload.user || null);
-        updateSessionStatus('Signed in', true, false);
-        setLoginMessage('Signed in successfully.', 'success');
+        return fetchCurrentSupabaseUserForToken(payload.access_token).then(function(user) {
+            storeSession(payload.access_token, payload.refresh_token || null, user || payload.user || null);
+            updateSessionStatus('Signed in', true, false);
+            setLoginMessage('Signed in successfully.', 'success');
 
-        return fetchInstalledAddons().then(function() {
-            setView('home', {
-                focusRegion: 'main',
-                resetMain: true
+            return fetchInstalledAddons().then(function() {
+                return fetchCatalogs();
+            }).then(function() {
+                setView('home', {
+                    focusRegion: 'main',
+                    resetMain: true
+                });
             });
         });
     });
 }
 
 function logout() {
-    storeSession(null, null);
-    state.addons = [];
+    storeSession(null, null, null);
     state.streams = [];
     state.currentStream = null;
-    renderAddons();
-    renderPlayerState();
     updateSessionStatus('Signed out', false, false);
     setLoginMessage('Signed out locally.', null);
-    setAddonsMessage('Sign in and choose a title to load addon streams.', null);
+    setAddonsMessage('Sign in with Nuvio to load your synced stream addons.', null);
 
-    if (state.currentView === 'login') {
-        startQrLoginSession(false);
-    }
+    return fetchInstalledAddons().then(function() {
+        renderAddons();
+        renderPlayerState();
+        return fetchCatalogs();
+    }).then(function() {
+        if (state.currentView === 'login') {
+            startQrLoginSession(false);
+        }
+    });
 }
 
 function fetchInstalledAddons() {
-    if (!state.authKey) {
-        state.addons = [];
-        renderAddons();
-        return Promise.resolve();
-    }
+    return fetchAddonUrlsFromNuvio().then(function(urls) {
+        var uniqueUrls = uniqueList((urls || []).map(canonicalizeAddonUrl).filter(Boolean));
 
-    return requestJson(API_BASE + '/api/addonCollectionGet', 'POST', {
-        authKey: state.authKey,
-        update: true
-    }).then(function(payload) {
-        state.addons = payload && Array.isArray(payload.addons) ? payload.addons : [];
+        return Promise.all(uniqueUrls.map(function(url) {
+            return fetchAddonDefinition(url);
+        }));
+    }).then(function(addons) {
+        state.addons = (addons || []).filter(Boolean);
         renderAddons();
         return state.addons;
     }).catch(function(error) {
-        state.addons = [];
-        renderAddons();
-        setAddonsMessage('Could not load installed addons: ' + error.message, 'error');
+        return Promise.all(DEFAULT_ADDON_URLS.map(function(url) {
+            return fetchAddonDefinition(url);
+        })).then(function(defaultAddons) {
+            state.addons = (defaultAddons || []).filter(Boolean);
+            renderAddons();
+            setAddonsMessage('Could not load synced addons. Showing default catalogs only.', 'error');
+            return state.addons;
+        });
     });
 }
 
 function getStreamCapableAddons(type, id) {
     return state.addons.filter(function(addon) {
-        var resources = addon && addon.manifest && addon.manifest.resources;
-        if (!resources || !resources.length) {
-            return false;
-        }
-
-        return resources.some(function(resource) {
-            var resourceName = typeof resource === 'string' ? resource : resource.name;
-            var resourceTypes = typeof resource === 'string' ? null : resource.types;
-            var idPrefixes = typeof resource === 'string' ? null : resource.idPrefixes;
-
-            if (resourceName !== 'stream') {
-                return false;
-            }
-            if (resourceTypes && resourceTypes.length && resourceTypes.indexOf(type) === -1) {
-                return false;
-            }
-            if (idPrefixes && idPrefixes.length && id) {
-                return idPrefixes.some(function(prefix) {
-                    return id.indexOf(prefix) === 0;
-                });
-            }
-
-            return true;
-        });
+        return addonSupportsResource(addon, ['stream'], type, id);
     });
 }
 
 function getSubtitleCapableAddons(type, id) {
     return state.addons.filter(function(addon) {
-        var resources = addon && addon.manifest && addon.manifest.resources;
-        if (!resources || !resources.length) {
-            return false;
-        }
-
-        return resources.some(function(resource) {
-            var resourceName = typeof resource === 'string' ? resource : resource.name;
-            var resourceTypes = typeof resource === 'string' ? null : resource.types;
-            var idPrefixes = typeof resource === 'string' ? null : resource.idPrefixes;
-
-            if (resourceName !== 'subtitles') {
-                return false;
-            }
-            if (resourceTypes && resourceTypes.length && resourceTypes.indexOf(type) === -1) {
-                return false;
-            }
-            if (idPrefixes && idPrefixes.length && id) {
-                return idPrefixes.some(function(prefix) {
-                    return id.indexOf(prefix) === 0;
-                });
-            }
-
-            return true;
-        });
+        return addonSupportsResource(addon, ['subtitles', 'subtitle'], type, id);
     });
 }
 
 function addonBaseUrl(transportUrl) {
-    if (!transportUrl || transportUrl.indexOf('http') !== 0) {
+    var cleanTransport = canonicalizeAddonUrl(transportUrl);
+
+    if (!cleanTransport || cleanTransport.indexOf('http') !== 0) {
         return null;
     }
-    if (transportUrl.indexOf('/manifest.json') !== -1) {
-        return transportUrl.split('/manifest.json')[0];
-    }
-    return null;
+
+    return cleanTransport;
 }
 
 function getStreamBehaviorHints(streamEntry) {
@@ -3255,6 +3934,9 @@ function normalizeAddonSubtitleTracks(addonName, baseUrl, subtitles) {
         if (!url) {
             return null;
         }
+        if (!isEnglishSubtitleEntry(track)) {
+            return null;
+        }
 
         return {
             id: 'subtitle-ext-addon-' + addonName.replace(/[^a-z0-9]+/ig, '-').toLowerCase() + '-' + index,
@@ -3268,30 +3950,79 @@ function normalizeAddonSubtitleTracks(addonName, baseUrl, subtitles) {
     }).filter(Boolean);
 }
 
+function normalizeSubtitleLookupId(value) {
+    var raw = String(value || '').trim();
+    var head = raw.split(':')[0];
+
+    return head || raw;
+}
+
+function buildSubtitleIdCandidates(type, videoId) {
+    var candidates = [];
+
+    function push(value) {
+        var normalized = String(value || '').trim();
+
+        if (!normalized || candidates.indexOf(normalized) !== -1) {
+            return;
+        }
+
+        candidates.push(normalized);
+    }
+
+    if (normalizeAddonType(type) === 'series') {
+        push(videoId);
+    }
+
+    push(state.selectedItem && state.selectedItem.id);
+    push(normalizeSubtitleLookupId(state.selectedItem && state.selectedItem.id));
+    push(normalizeSubtitleLookupId(videoId));
+
+    return candidates;
+}
+
 function fetchSubtitlesFromAddon(addon, type, videoId, streamEntry) {
     var baseUrl = addonBaseUrl(addon.transportUrl);
     var addonName = addon.manifest && addon.manifest.name ? addon.manifest.name : 'Addon';
     var extraArgs = buildSubtitleExtraArgs(streamEntry);
-    var requestUrl;
+    var idCandidates = buildSubtitleIdCandidates(type, videoId);
 
     if (!baseUrl) {
         return Promise.resolve([]);
     }
 
-    requestUrl = baseUrl
-        + '/subtitles/'
-        + encodeURIComponent(type)
-        + '/'
-        + encodeURIComponent(videoId)
-        + (extraArgs ? '/' + extraArgs : '')
-        + '.json';
+    function requestNext(index) {
+        var id = idCandidates[index];
+        var requestUrl;
 
-    return requestJson(requestUrl, 'GET').then(function(payload) {
-        var subtitles = payload && Array.isArray(payload.subtitles) ? payload.subtitles : [];
-        return normalizeAddonSubtitleTracks(addonName, baseUrl, subtitles);
-    }).catch(function() {
-        return [];
-    });
+        if (!id) {
+            return Promise.resolve([]);
+        }
+
+        requestUrl = baseUrl
+            + '/subtitles/'
+            + encodeURIComponent(type)
+            + '/'
+            + encodeURIComponent(id)
+            + (extraArgs ? '/' + extraArgs : '')
+            + '.json';
+
+        return requestJson(requestUrl, 'GET').then(function(payload) {
+            var subtitles = payload && Array.isArray(payload.subtitles)
+                ? payload.subtitles
+                : (payload && Array.isArray(payload.subtitle) ? payload.subtitle : []);
+
+            if (!subtitles.length && index + 1 < idCandidates.length) {
+                return requestNext(index + 1);
+            }
+
+            return normalizeAddonSubtitleTracks(addonName, baseUrl, subtitles);
+        }).catch(function() {
+            return requestNext(index + 1);
+        });
+    }
+
+    return requestNext(0);
 }
 
 function refreshSubtitleAddonsForCurrentStream() {
@@ -3990,9 +4721,40 @@ function applySearchKey(key) {
     scheduleSearchCatalogs();
 }
 
+function getSearchCatalogOptions(type) {
+    return getBrowseOptions(type).filter(function(option) {
+        return option.supportsSearch;
+    });
+}
+
+function searchCatalogType(type, query, limit) {
+    var options = getSearchCatalogOptions(type);
+
+    if (!options.length) {
+        return Promise.resolve([]);
+    }
+
+    return Promise.all(options.slice(0, 6).map(function(option) {
+        return requestJson(buildCatalogRequestUrl(option, 0, {
+            search: query
+        }), 'GET').then(function(payload) {
+            return normalizeCatalogPayloadWithLimit(payload, limit);
+        }).catch(function() {
+            return [];
+        });
+    })).then(function(groups) {
+        var items = [];
+
+        groups.forEach(function(group) {
+            items = items.concat(group);
+        });
+
+        return uniqueCatalogItems(items, limit);
+    });
+}
+
 function searchCatalogs() {
     var query = state.searchQuery.replace(/^\s+|\s+$/g, '');
-    var requests = [];
     var requestId;
 
     state.searchQuery = query;
@@ -4005,31 +4767,20 @@ function searchCatalogs() {
         state.searchSeries = [];
         state.searchResults = [];
         renderSearchResults();
-        setSearchMessage('Use the TV keyboard to search live catalogs.', null);
+        setSearchMessage('Use the TV keyboard to search linked addon catalogs.', null);
         return Promise.resolve();
     }
 
     setSearchMessage('Searching for "' + query + '"...', null);
 
-    requests.push(
-        requestJson(CINEMETA_BASE + '/catalog/movie/top/search=' + encodeURIComponent(query) + '.json', 'GET')
-            .then(function(payload) {
-                state.searchMovies = normalizeCatalogPayloadWithLimit(payload, 20);
-            }).catch(function() {
-                state.searchMovies = [];
-            })
-    );
-
-    requests.push(
-        requestJson(CINEMETA_BASE + '/catalog/series/top/search=' + encodeURIComponent(query) + '.json', 'GET')
-            .then(function(payload) {
-                state.searchSeries = normalizeCatalogPayloadWithLimit(payload, 20);
-            }).catch(function() {
-                state.searchSeries = [];
-            })
-    );
-
-    return Promise.all(requests).then(function() {
+    return Promise.all([
+        searchCatalogType('movie', query, 20).then(function(items) {
+            state.searchMovies = items;
+        }),
+        searchCatalogType('series', query, 20).then(function(items) {
+            state.searchSeries = items;
+        })
+    ]).then(function() {
         var total;
 
         if (requestId !== state.searchRequestId) {
@@ -4180,6 +4931,43 @@ function renderContinueWatching() {
     refreshFeaturedRotation();
 }
 
+function fetchMetaFromAddons(type, id) {
+    var eligibleAddons = state.addons.filter(function(addon) {
+        return addonSupportsResource(addon, ['meta'], type, id);
+    });
+
+    function requestNext(index) {
+        var addon = eligibleAddons[index];
+        var baseUrl;
+
+        if (!addon) {
+            return Promise.reject(new Error('No metadata addon returned details for this title.'));
+        }
+
+        baseUrl = addonBaseUrl(addon.transportUrl);
+        if (!baseUrl) {
+            return requestNext(index + 1);
+        }
+
+        return requestJson(
+            baseUrl + '/meta/' + encodeURIComponent(type) + '/' + encodeURIComponent(id) + '.json',
+            'GET'
+        ).then(function(payload) {
+            var meta = payload && payload.meta ? payload.meta : payload;
+
+            if (!meta) {
+                throw new Error('Missing meta');
+            }
+
+            return meta;
+        }).catch(function() {
+            return requestNext(index + 1);
+        });
+    }
+
+    return requestNext(0);
+}
+
 function prepareSelection(item, type, options) {
     state.selectedItem = item;
     state.selectedType = type;
@@ -4192,15 +4980,6 @@ function prepareSelection(item, type, options) {
     state.autoplayPending = !!(options && options.autoplayFirst);
     renderAddons();
 
-    if (!state.authKey) {
-        setView('addons', {
-            focusRegion: 'main',
-            resetMain: true
-        });
-        setAddonsMessage('Sign in first to load installed addons and streams.', 'error');
-        return;
-    }
-
     setView('addons', {
         focusRegion: 'main',
         resetMain: true
@@ -4208,7 +4987,7 @@ function prepareSelection(item, type, options) {
     setAddonsMessage('Loading selection details...', null);
 
     if (type === 'series') {
-        requestJson(CINEMETA_BASE + '/meta/series/' + encodeURIComponent(item.id) + '.json', 'GET')
+        fetchMetaFromAddons('series', item.id)
             .then(function(payload) {
                 var meta = payload && payload.meta ? payload.meta : payload;
                 var seasons;
@@ -4246,10 +5025,6 @@ function loadStreamsForSelection() {
     var videoId = state.selectedVideo && state.selectedVideo.id;
     var eligibleAddons;
 
-    if (!state.authKey) {
-        setAddonsMessage('Sign in first to load installed addons and streams.', 'error');
-        return;
-    }
     if (!state.selectedItem || !type || !videoId) {
         setAddonsMessage('Choose a title first.', 'error');
         return;
@@ -4259,7 +5034,12 @@ function loadStreamsForSelection() {
     if (!eligibleAddons.length) {
         state.streams = [];
         renderAddons();
-        setAddonsMessage('No installed addons expose stream resources for this selection.', 'error');
+        setAddonsMessage(
+            state.authKey
+                ? 'No linked addons expose stream resources for this selection.'
+                : 'No stream addons are available yet. Sign in with Nuvio to sync your addon collection.',
+            'error'
+        );
         return;
     }
 
@@ -4416,7 +5196,9 @@ function bindLogin() {
     });
 
     byId('logoutButton').addEventListener('click', function() {
-        logout();
+        logout().catch(function(error) {
+            setLoginMessage('Logout failed: ' + error.message, 'error');
+        });
     });
 
     byId('qrRefreshButton').addEventListener('click', function() {
@@ -4532,8 +5314,6 @@ function handleLeft() {
                 return;
             }
 
-            state.focusRegion = 'nav';
-            focusCurrent();
             return;
         }
     }
@@ -4567,11 +5347,7 @@ function handleLeft() {
     if (state.mainCol > 0) {
         state.mainCol -= 1;
         focusCurrent();
-        return;
     }
-
-    state.focusRegion = 'nav';
-    focusCurrent();
 }
 
 function handleRight() {
@@ -4755,13 +5531,14 @@ function init() {
     renderPlayerState();
     startFeaturedRotation();
 
-    verifyStoredSession().then(function() {
-        return Promise.all([
-            fetchInstalledAddons(),
-            fetchCatalogs()
-        ]);
-    }, function() {
+    verifyStoredSession().catch(function() {
+        return null;
+    }).then(function() {
+        return fetchInstalledAddons();
+    }).then(function() {
         return fetchCatalogs();
+    }).catch(function(error) {
+        updateConnectionStatus('Startup error: ' + error.message, false, true);
     });
 
     setTimeout(function() {
