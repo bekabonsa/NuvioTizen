@@ -1,11 +1,24 @@
 var API_BASE = 'https://api.strem.io';
 var CINEMETA_BASE = 'https://v3-cinemeta.strem.io';
+var SUPABASE_URL = 'https://dpyhjjcoabcglfmgecug.supabase.co';
+var SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRweWhqamNvYWJjZ2xmbWdlY3VnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA3ODYyNDcsImV4cCI6MjA4NjM2MjI0N30.U-3QSNDdpsnvRk_7ZL419AFTOtggHJJcmkodxeXjbkg';
+var TV_LOGIN_REDIRECT_BASE_URL = 'https://www.stremio.com/tv-login';
 var STORAGE_AUTH = 'stremio.authKey';
 var STORAGE_USER = 'stremio.user';
 var STORAGE_CONTINUE = 'stremio.continueWatching';
 var FALLBACK_MOVIE_GENRES = ['Top', 'Action', 'Comedy', 'Drama', 'Sci-Fi', 'Thriller', 'Animation', 'Documentary'];
 var FALLBACK_SERIES_GENRES = ['Top', 'Drama', 'Comedy', 'Crime', 'Sci-Fi', 'Animation', 'Thriller', 'Documentary'];
 var NAV_VIEWS = ['search', 'home', 'series', 'movies', 'login'];
+var FEATURED_ROTATION_MS = 9000;
+var SEARCH_KEYBOARD_ROWS = [
+    ['a', 'b', 'c', 'd', 'e', 'f'],
+    ['g', 'h', 'i', 'j', 'k', 'l'],
+    ['m', 'n', 'o', 'p', 'q', 'r'],
+    ['s', 't', 'u', 'v', 'w', 'x'],
+    ['y', 'z', '1', '2', '3', '4'],
+    ['5', '6', '7', '8', '9', '0'],
+    ['space', 'backspace', 'clear']
+];
 var VIEW_META = {
     home: {
         eyebrow: 'Discover',
@@ -63,6 +76,10 @@ var state = {
     searchScope: 'all',
     searchMovies: [],
     searchSeries: [],
+    searchResults: [],
+    searchSuggestions: [],
+    searchDebounceTimer: null,
+    searchRequestId: 0,
     selectedItem: null,
     selectedType: null,
     allSeriesVideos: [],
@@ -74,10 +91,13 @@ var state = {
     currentStream: null,
     audioTracks: [],
     subtitleTracks: [],
+    streamSubtitleTracks: [],
+    addonSubtitleTracks: [],
     externalSubtitleTracks: [],
     externalSubtitleCues: [],
     activeAudioTrack: null,
     activeSubtitleTrack: 'subtitle-off',
+    subtitleRequestId: 0,
     currentTimeMs: 0,
     durationMs: 0,
     playbackTicker: null,
@@ -91,10 +111,28 @@ var state = {
     mainRow: 0,
     mainCol: 0,
     featuredKey: null,
+    featuredIndex: 0,
+    featuredRotationItems: [],
     featuredTimer: null,
     featuredItem: null,
     featuredKind: null,
-    autoplayPending: false
+    featuredLabel: '',
+    autoplayPending: false,
+    qrAuthAccessToken: null,
+    qrAuthRefreshToken: null,
+    qrSessionId: 0,
+    qrPollTimer: null,
+    qrExpiresTimer: null,
+    qrCode: null,
+    qrLoginUrl: '',
+    qrDeviceNonce: '',
+    qrExpiresAt: 0,
+    qrStarting: false,
+    homeRailIndices: {
+        continue: 0,
+        movies: 0,
+        series: 0
+    }
 };
 
 function byId(id) {
@@ -107,6 +145,9 @@ function queryAll(selector) {
 
 function updateConnectionStatus(text, ok, isError) {
     var el = byId('connectionStatus');
+    if (!el) {
+        return;
+    }
     el.textContent = text;
     el.className = 'status-pill';
     if (ok) {
@@ -119,6 +160,9 @@ function updateConnectionStatus(text, ok, isError) {
 
 function updateSessionStatus(text, ok, isError) {
     var el = byId('sessionStatus');
+    if (!el) {
+        return;
+    }
     el.textContent = text;
     el.className = 'status-pill';
     if (ok) {
@@ -131,6 +175,20 @@ function updateSessionStatus(text, ok, isError) {
 
 function setLoginMessage(text, tone) {
     var el = byId('loginMessage');
+    el.textContent = text;
+    el.className = 'helper';
+    if (tone === 'error') {
+        el.classList.add('is-error');
+    } else if (tone === 'success') {
+        el.classList.add('is-success');
+    }
+}
+
+function setQrLoginMessage(text, tone) {
+    var el = byId('qrLoginMessage');
+    if (!el) {
+        return;
+    }
     el.textContent = text;
     el.className = 'helper';
     if (tone === 'error') {
@@ -259,6 +317,8 @@ function trackContinueWatching(item, kind, video) {
 function resetTrackState() {
     state.audioTracks = [];
     state.subtitleTracks = [];
+    state.streamSubtitleTracks = [];
+    state.addonSubtitleTracks = [];
     state.externalSubtitleTracks = [];
     state.externalSubtitleCues = [];
     state.activeAudioTrack = null;
@@ -585,8 +645,35 @@ function getExternalSubtitleTracks(stream) {
     }).filter(Boolean);
 }
 
-function syncExternalSubtitleTracks() {
-    state.externalSubtitleTracks = getExternalSubtitleTracks(state.currentStream);
+function dedupeSubtitleTracks(tracks) {
+    var seen = {};
+
+    return (tracks || []).filter(function(track) {
+        var key;
+
+        if (!track || !track.id || !track.url) {
+            return false;
+        }
+
+        key = [
+            track.url,
+            track.language || '',
+            track.label || ''
+        ].join('|');
+
+        if (seen[key]) {
+            return false;
+        }
+
+        seen[key] = true;
+        return true;
+    });
+}
+
+function updateExternalSubtitleTracks() {
+    state.externalSubtitleTracks = dedupeSubtitleTracks(
+        state.streamSubtitleTracks.concat(state.addonSubtitleTracks)
+    );
 
     if (isExternalSubtitleTrackId(state.activeSubtitleTrack)) {
         var stillExists = state.externalSubtitleTracks.some(function(track) {
@@ -595,8 +682,14 @@ function syncExternalSubtitleTracks() {
         if (!stillExists) {
             state.activeSubtitleTrack = 'subtitle-off';
             state.externalSubtitleCues = [];
+            updateSubtitleOverlay(0);
         }
     }
+}
+
+function syncExternalSubtitleTracks() {
+    state.streamSubtitleTracks = getExternalSubtitleTracks(state.currentStream);
+    updateExternalSubtitleTracks();
 }
 
 function getAllSubtitleTracks() {
@@ -604,10 +697,7 @@ function getAllSubtitleTracks() {
 }
 
 function getPreferredSubtitleTracks() {
-    if (state.externalSubtitleTracks.length) {
-        return state.externalSubtitleTracks.slice();
-    }
-    return state.subtitleTracks.slice();
+    return state.externalSubtitleTracks.concat(state.subtitleTracks);
 }
 
 function applyPreferredSubtitleSelection() {
@@ -1436,22 +1526,23 @@ function getMainRowContainers() {
     }
 
     if (state.currentView === 'search') {
-        var searchContainers = [
-            byId('searchFormSection'),
-            byId('searchFormSection'),
-            byId('searchFormSection')
-        ];
+        var searchContainers = [];
+        var keyboardRows = queryAll('#searchKeyboard .search-keyboard-row');
+        var suggestionButtons = queryAll('#searchSuggestionList .search-suggestion');
 
-        queryAll('#searchMovieGrid .card-row').forEach(function(row) {
-            searchContainers.push(row);
-        });
-        queryAll('#searchSeriesGrid .card-row').forEach(function(row) {
-            searchContainers.push(row);
+        keyboardRows.forEach(function() {
+            searchContainers.push(byId('searchShellSection'));
         });
 
-        return searchContainers.filter(function(el) {
-            return el && el.style.display !== 'none';
+        suggestionButtons.forEach(function() {
+            searchContainers.push(byId('searchShellSection'));
         });
+
+        queryAll('#searchResultGrid .card-row').forEach(function(row) {
+            searchContainers.push(row);
+        });
+
+        return searchContainers.filter(Boolean);
     }
 
     if (state.currentView === 'addons') {
@@ -1485,7 +1576,12 @@ function getMainRowContainers() {
         return playerContainers.filter(Boolean);
     }
 
-    return [byId('loginForm'), byId('loginForm'), byId('loginForm')].filter(Boolean);
+    return [
+        byId('loginForm'),
+        byId('loginForm'),
+        byId('loginForm'),
+        byId('qrLoginCard')
+    ].filter(Boolean);
 }
 
 function getMainRows() {
@@ -1561,42 +1657,32 @@ function getMainRows() {
 
     if (state.currentView === 'search') {
         var searchRows = [];
-        var searchScopeButtons = queryAll('#searchScopeGroup .search-scope');
-        var searchActionButtons = queryAll('.search-actions .action-button');
-        var searchMovieRows = state.searchScope === 'series' ? [] : queryAll('#searchMovieGrid .card-row');
-        var searchSeriesRows = state.searchScope === 'movies' ? [] : queryAll('#searchSeriesGrid .card-row');
+        var keyboardRows = queryAll('#searchKeyboard .search-keyboard-row');
+        var suggestionButtons = queryAll('#searchSuggestionList .search-suggestion');
+        var resultRows = queryAll('#searchResultGrid .card-row');
 
-        searchRows.push([byId('searchInput')]);
-        if (searchScopeButtons.length) {
-            searchRows.push(searchScopeButtons);
-        }
-        if (searchActionButtons.length) {
-            searchRows.push(searchActionButtons);
-        }
-        searchMovieRows.forEach(function(row) {
+        keyboardRows.forEach(function(row) {
+            var cards = queryAll('#' + row.id + ' .card');
+            var keys;
+            if (cards.length) {
+                return;
+            }
+            keys = queryAll('#' + row.id + ' .search-key');
+            if (keys.length) {
+                searchRows.push(keys);
+            }
+        });
+
+        suggestionButtons.forEach(function(button) {
+            searchRows.push([button]);
+        });
+
+        resultRows.forEach(function(row) {
             var cards = queryAll('#' + row.id + ' .card');
             if (cards.length) {
                 searchRows.push(cards);
             }
         });
-        searchSeriesRows.forEach(function(row) {
-            var cards = queryAll('#' + row.id + ' .card');
-            if (cards.length) {
-                searchRows.push(cards);
-            }
-        });
-        if (!searchMovieRows.length && state.searchScope !== 'series') {
-            var searchMovieCards = queryAll('#searchMovieGrid .card');
-            if (searchMovieCards.length) {
-                searchRows = searchRows.concat(chunkItems(searchMovieCards, 4));
-            }
-        }
-        if (!searchSeriesRows.length && state.searchScope !== 'movies') {
-            var searchSeriesCards = queryAll('#searchSeriesGrid .card');
-            if (searchSeriesCards.length) {
-                searchRows = searchRows.concat(chunkItems(searchSeriesCards, 4));
-            }
-        }
         return searchRows;
     }
 
@@ -1657,8 +1743,74 @@ function getMainRows() {
     return [
         [byId('emailInput')],
         [byId('passwordInput')],
-        [byId('loginButton'), byId('logoutButton')]
+        [byId('loginButton'), byId('logoutButton')],
+        [byId('qrRefreshButton')]
     ];
+}
+
+function buildContinueEntries() {
+    return state.continueWatching.map(function(entry) {
+        return {
+            item: entry.item,
+            kind: entry.kind,
+            metaText: entry.kind === 'series' && entry.video
+                ? 'Resume • Season ' + entry.video.season + ' • Episode ' + entry.video.episode
+                : 'Resume watching'
+        };
+    });
+}
+
+function getHomeRailDescriptors() {
+    var descriptors = [];
+
+    if (state.continueWatching.length) {
+        descriptors.push({
+            key: 'continue',
+            containerId: 'continueRail',
+            entries: buildContinueEntries()
+        });
+    }
+
+    descriptors.push({
+        key: 'movies',
+        containerId: 'homeMovieRail',
+        entries: state.movies.slice(0, 18).map(function(item) {
+            return { item: item, kind: 'movie' };
+        })
+    });
+
+    descriptors.push({
+        key: 'series',
+        containerId: 'homeSeriesRail',
+        entries: state.series.slice(0, 18).map(function(item) {
+            return { item: item, kind: 'series' };
+        })
+    });
+
+    return descriptors;
+}
+
+function getHomeRailDescriptorForMainRow(rowIndex) {
+    if (state.currentView !== 'home' || rowIndex <= 0) {
+        return null;
+    }
+
+    return getHomeRailDescriptors()[rowIndex - 1] || null;
+}
+
+function getSearchPaneInfo() {
+    var keyboardRows = queryAll('#searchKeyboard .search-keyboard-row').length;
+    var suggestionCount = queryAll('#searchSuggestionList .search-suggestion').length;
+    var resultRows = queryAll('#searchResultGrid .card-row').length;
+    var leftRowCount = keyboardRows + suggestionCount;
+
+    return {
+        keyboardRows: keyboardRows,
+        suggestionCount: suggestionCount,
+        resultRows: resultRows,
+        leftRowCount: leftRowCount,
+        firstResultRow: leftRowCount
+    };
 }
 
 function clampMainFocus(rows) {
@@ -1687,10 +1839,13 @@ function scrollElementIntoView(el) {
 
     if (parent && parent.classList && (
         parent.classList.contains('rail') ||
+        parent.classList.contains('card-row') ||
         parent.classList.contains('nav-list') ||
         parent.classList.contains('season-rail') ||
         parent.classList.contains('episode-rail') ||
         parent.classList.contains('genre-chip-row') ||
+        parent.classList.contains('search-keyboard-row') ||
+        parent.classList.contains('search-suggestion-list') ||
         parent.id === 'playerActions' ||
         parent.id === 'searchScopeGroup'
     )) {
@@ -1702,24 +1857,11 @@ function scrollElementIntoView(el) {
             parent.scrollLeft = right - parent.clientWidth;
         }
     }
-
-    if (el && typeof el.scrollIntoView === 'function' && (!parent || !parent.classList || (
-        !parent.classList.contains('rail') &&
-        !parent.classList.contains('season-rail') &&
-        !parent.classList.contains('episode-rail') &&
-        !parent.classList.contains('genre-chip-row') &&
-        parent.id !== 'playerActions' &&
-        parent.id !== 'searchScopeGroup'
-    ))) {
-        el.scrollIntoView({
-            block: 'nearest',
-            inline: 'nearest'
-        });
-    }
 }
 
 function scrollActiveViewToTop() {
     var activeView = queryAll('.view.is-active')[0];
+    window.scrollTo(0, 0);
     if (activeView) {
         activeView.scrollTop = 0;
     }
@@ -1816,6 +1958,10 @@ function focusCurrent() {
         return;
     }
 
+    if (state.currentView === 'home' && state.mainRow > 0) {
+        state.mainCol = 0;
+    }
+
     var rowContainers = getMainRowContainers();
     if (rowContainers[state.mainRow]) {
         scrollRowContainerIntoView(rowContainers[state.mainRow]);
@@ -1833,6 +1979,10 @@ function setView(viewName, options) {
     var navIndex = NAV_VIEWS.indexOf(viewName);
     var previousView = state.currentView;
     var shouldTrackHistory = !options || options.pushHistory !== false;
+
+    if (previousView === 'login' && viewName !== 'login') {
+        stopQrLoginSession(true);
+    }
 
     if (previousView === 'player' && viewName !== 'player') {
         setPlayerFullscreen(false);
@@ -1863,6 +2013,20 @@ function setView(viewName, options) {
     updateNavState();
     updateViewState();
     updatePageHeader();
+    window.scrollTo(0, 0);
+
+    if (viewName === 'home' && state.featuredRotationItems[state.featuredIndex]) {
+        updateFeatured(
+            state.featuredRotationItems[state.featuredIndex].item,
+            state.featuredRotationItems[state.featuredIndex].label
+        );
+    }
+
+    if (viewName === 'login') {
+        setTimeout(function() {
+            startQrLoginSession(false);
+        }, 0);
+    }
 
     if (viewName === 'player') {
         setTimeout(syncAvplayRect, 50);
@@ -1934,6 +2098,117 @@ function formatSeasonLabel(season) {
     return 'Season ' + season;
 }
 
+function buildFeaturedRotationItems() {
+    var pool = [];
+    var seen = {};
+
+    function pushEntry(item, kind, label) {
+        var key;
+
+        if (!item || !item.id) {
+            return;
+        }
+
+        key = kind + ':' + item.id;
+        if (seen[key]) {
+            return;
+        }
+
+        seen[key] = true;
+        pool.push({
+            item: item,
+            kind: kind,
+            label: label
+        });
+    }
+
+    state.continueWatching.forEach(function(entry) {
+        pushEntry(entry.item, entry.kind, entry.kind === 'series' ? 'Series Spotlight' : 'Movie Spotlight');
+    });
+
+    state.movies.slice(0, 8).forEach(function(item) {
+        pushEntry(item, 'movie', 'Movie Spotlight');
+    });
+
+    state.series.slice(0, 8).forEach(function(item) {
+        pushEntry(item, 'series', 'Series Spotlight');
+    });
+
+    return pool;
+}
+
+function refreshFeaturedRotation() {
+    var previousKey = state.featuredItem && state.featuredKind
+        ? (state.featuredKind + ':' + state.featuredItem.id)
+        : '';
+    var nextEntry;
+
+    state.featuredRotationItems = buildFeaturedRotationItems();
+
+    if (!state.featuredRotationItems.length) {
+        state.featuredIndex = 0;
+        return;
+    }
+
+    state.featuredIndex = 0;
+    state.featuredRotationItems.some(function(entry, index) {
+        if ((entry.kind + ':' + entry.item.id) === previousKey) {
+            state.featuredIndex = index;
+            return true;
+        }
+        return false;
+    });
+
+    nextEntry = state.featuredRotationItems[state.featuredIndex];
+    if (state.currentView === 'home' || !state.featuredItem) {
+        updateFeatured(nextEntry.item, nextEntry.label);
+        return;
+    }
+
+    state.featuredItem = nextEntry.item;
+    state.featuredKind = nextEntry.kind;
+    state.featuredLabel = nextEntry.label;
+    state.featuredKey = nextEntry.kind + ':' + nextEntry.item.id;
+}
+
+function advanceFeaturedRotation() {
+    var nextEntry;
+
+    if (!state.featuredRotationItems.length) {
+        refreshFeaturedRotation();
+    }
+
+    if (state.featuredRotationItems.length < 2) {
+        if (state.featuredRotationItems[0]) {
+            updateFeatured(state.featuredRotationItems[0].item, state.featuredRotationItems[0].label);
+        }
+        return;
+    }
+
+    state.featuredIndex = (state.featuredIndex + 1) % state.featuredRotationItems.length;
+    nextEntry = state.featuredRotationItems[state.featuredIndex];
+    if (state.currentView === 'home') {
+        updateFeatured(nextEntry.item, nextEntry.label);
+        return;
+    }
+
+    state.featuredItem = nextEntry.item;
+    state.featuredKind = nextEntry.kind;
+    state.featuredLabel = nextEntry.label;
+    state.featuredKey = nextEntry.kind + ':' + nextEntry.item.id;
+}
+
+function startFeaturedRotation() {
+    if (state.featuredTimer) {
+        clearInterval(state.featuredTimer);
+        state.featuredTimer = null;
+    }
+
+    state.featuredTimer = setInterval(function() {
+        advanceFeaturedRotation();
+    }, FEATURED_ROTATION_MS);
+}
+
 function updateSelectedEpisodesForSeason() {
     if (state.selectedType !== 'series') {
         state.selectedEpisodes = [];
@@ -1979,6 +2254,7 @@ function updateFeatured(item, kind) {
     normalizedKind = kind && kind.toLowerCase().indexOf('series') !== -1 ? 'series' : 'movie';
     state.featuredItem = item;
     state.featuredKind = normalizedKind;
+    state.featuredLabel = kind;
 
     var poster = byId('featuredPoster');
     var label = poster.querySelector('.featured-poster-label');
@@ -1993,26 +2269,21 @@ function updateFeatured(item, kind) {
         'Live Cinemeta metadata is connected. This item is being used as the featured spotlight.';
 
     if (posterUrl) {
-        poster.style.backgroundImage =
-            'linear-gradient(180deg, rgba(8, 11, 18, 0.08), rgba(8, 11, 18, 0.6)), url("' + posterUrl + '")';
+        poster.style.backgroundImage = '';
+        poster.style.setProperty('--hero-art', 'url("' + posterUrl + '")');
         label.textContent = kind;
     } else {
-        poster.style.backgroundImage =
-            'linear-gradient(180deg, rgba(8, 11, 18, 0.08), rgba(8, 11, 18, 0.6)), #101623';
+        poster.style.backgroundImage = '';
+        poster.style.removeProperty('--hero-art');
         label.textContent = 'No artwork';
     }
 }
 
 function scheduleFeaturedUpdate(item, kind) {
-    if (state.currentView !== 'home') {
-        return;
-    }
-    if (state.featuredTimer) {
-        clearTimeout(state.featuredTimer);
-    }
-    state.featuredTimer = setTimeout(function() {
-        updateFeatured(item, kind);
-    }, 70);
+    return {
+        item: item,
+        kind: kind
+    };
 }
 
 function normalizeCatalogPayload(payload) {
@@ -2027,6 +2298,43 @@ function normalizeCatalogPayloadWithLimit(payload, limit) {
         return [];
     }
     return payload.metas.slice(0, typeof limit === 'number' ? limit : 12);
+}
+
+function normalizeHttpError(error) {
+    var parsed;
+    var candidates;
+    var message;
+
+    if (error instanceof Error) {
+        return error.message;
+    }
+
+    if (!error) {
+        return 'Request failed';
+    }
+
+    parsed = safeJsonParse(error.text);
+    candidates = [
+        parsed && parsed.msg,
+        parsed && parsed.message,
+        parsed && parsed.error_description,
+        parsed && parsed.error,
+        parsed && parsed.hint
+    ];
+
+    message = candidates.filter(function(value) {
+        return typeof value === 'string' && value.trim();
+    })[0];
+
+    if (!message && error.text) {
+        message = String(error.text).replace(/\s+/g, ' ').trim();
+    }
+
+    if (!message) {
+        return 'HTTP ' + (error.status || 0);
+    }
+
+    return (error.status ? 'HTTP ' + error.status + ': ' : '') + message;
 }
 
 function requestJson(url, method, body) {
@@ -2064,6 +2372,46 @@ function requestJson(url, method, body) {
             reject(new Error('Network request failed'));
         };
         xhr.send(body ? JSON.stringify(body) : null);
+    });
+}
+
+function requestJsonWithHeaders(url, method, body, headers) {
+    return new Promise(function(resolve, reject) {
+        var xhr = new XMLHttpRequest();
+        var payload = body ? JSON.stringify(body) : null;
+        xhr.open(method || 'GET', url, true);
+        xhr.setRequestHeader('Accept', 'application/json');
+        if (body) {
+            xhr.setRequestHeader('Content-Type', 'application/json');
+        }
+        Object.keys(headers || {}).forEach(function(name) {
+            xhr.setRequestHeader(name, headers[name]);
+        });
+        xhr.onreadystatechange = function() {
+            var parsed;
+            if (xhr.readyState !== 4) {
+                return;
+            }
+            if (xhr.status < 200 || xhr.status >= 300) {
+                reject({
+                    status: xhr.status,
+                    text: xhr.responseText
+                });
+                return;
+            }
+            parsed = safeJsonParse(xhr.responseText);
+            if (xhr.responseText && !parsed) {
+                reject(new Error('Invalid JSON response'));
+                return;
+            }
+            resolve(parsed);
+        };
+        xhr.onerror = function() {
+            reject(new Error('Network request failed'));
+        };
+        xhr.send(payload);
+    }).catch(function(error) {
+        throw new Error(normalizeHttpError(error));
     });
 }
 
@@ -2201,6 +2549,445 @@ function fetchCatalogs() {
     });
 }
 
+function getQrAuthHeaders() {
+    return {
+        apikey: SUPABASE_ANON_KEY,
+        Authorization: 'Bearer ' + (state.qrAuthAccessToken || SUPABASE_ANON_KEY)
+    };
+}
+
+function extractQrSessionTokens(payload) {
+    if (!payload || typeof payload !== 'object') {
+        return null;
+    }
+
+    return {
+        accessToken: payload.access_token || payload.accessToken || (payload.session && payload.session.access_token) || null,
+        refreshToken: payload.refresh_token || payload.refreshToken || (payload.session && payload.session.refresh_token) || null
+    };
+}
+
+function generateQrDeviceNonce() {
+    var bytes;
+    var binary = '';
+
+    if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+        return window.crypto.randomUUID();
+    }
+
+    bytes = new Uint8Array(24);
+    if (window.crypto && typeof window.crypto.getRandomValues === 'function') {
+        window.crypto.getRandomValues(bytes);
+    } else {
+        bytes = Array.prototype.map.call(bytes, function() {
+            return Math.floor(Math.random() * 256);
+        });
+    }
+
+    Array.prototype.forEach.call(bytes, function(value) {
+        binary += String.fromCharCode(value);
+    });
+
+    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function clearQrLoginTimers() {
+    if (state.qrPollTimer) {
+        clearInterval(state.qrPollTimer);
+        state.qrPollTimer = null;
+    }
+    if (state.qrExpiresTimer) {
+        clearInterval(state.qrExpiresTimer);
+        state.qrExpiresTimer = null;
+    }
+}
+
+function setQrExpiryMessage(text) {
+    var el = byId('qrLoginExpiry');
+    if (!el) {
+        return;
+    }
+    el.textContent = text;
+}
+
+function renderQrLoginSignedIn() {
+    var image = byId('qrLoginImage');
+    var code = byId('qrLoginCode');
+
+    clearQrLoginTimers();
+    state.qrStarting = false;
+    state.qrCode = null;
+    state.qrLoginUrl = '';
+    state.qrDeviceNonce = '';
+    state.qrExpiresAt = 0;
+
+    if (image) {
+        image.removeAttribute('src');
+        image.classList.remove('is-ready');
+    }
+    if (code) {
+        code.textContent = 'TV already connected';
+    }
+    setQrExpiryMessage('Use Refresh QR to connect a different account from your phone.');
+    setQrLoginMessage('QR login is available, but this TV already has a Stremio session.', 'success');
+}
+
+function renderQrLoginPlaceholder(codeText, expiryText, helperText, tone) {
+    var image = byId('qrLoginImage');
+    var code = byId('qrLoginCode');
+
+    if (image) {
+        image.removeAttribute('src');
+        image.classList.remove('is-ready');
+    }
+    if (code) {
+        code.textContent = codeText;
+    }
+    setQrExpiryMessage(expiryText);
+    setQrLoginMessage(helperText, tone);
+}
+
+function renderQrLoginSession(session) {
+    var image = byId('qrLoginImage');
+    var code = byId('qrLoginCode');
+
+    if (image) {
+        image.src = session.qrImageUrl;
+        image.classList.add('is-ready');
+    }
+    if (code) {
+        code.textContent = 'Code: ' + session.code;
+    }
+    setQrLoginMessage('Scan the QR code with your phone and approve the Stremio sign-in.', null);
+}
+
+function refreshQrCountdown() {
+    var remainingSeconds;
+
+    if (!state.qrExpiresAt) {
+        setQrExpiryMessage('Waiting for a fresh QR session.');
+        return;
+    }
+
+    remainingSeconds = Math.max(0, Math.ceil((state.qrExpiresAt - Date.now()) / 1000));
+    if (!remainingSeconds) {
+        setQrExpiryMessage('This QR code expired. Refresh it to continue.');
+        return;
+    }
+
+    setQrExpiryMessage('Expires in ' + remainingSeconds + 's');
+}
+
+function startQrCountdown() {
+    if (state.qrExpiresTimer) {
+        clearInterval(state.qrExpiresTimer);
+        state.qrExpiresTimer = null;
+    }
+    refreshQrCountdown();
+    state.qrExpiresTimer = setInterval(refreshQrCountdown, 1000);
+}
+
+function ensureQrAnonymousSession() {
+    var baseHeaders = {
+        apikey: SUPABASE_ANON_KEY,
+        Authorization: 'Bearer ' + SUPABASE_ANON_KEY
+    };
+
+    if (state.qrAuthAccessToken) {
+        return Promise.resolve(state.qrAuthAccessToken);
+    }
+
+    return requestJsonWithHeaders(SUPABASE_URL + '/auth/v1/signup', 'POST', {
+        data: {
+            tv_client: 'stremio-test'
+        }
+    }, baseHeaders).catch(function() {
+        return requestJsonWithHeaders(SUPABASE_URL + '/auth/v1/token?grant_type=anonymous', 'POST', {}, baseHeaders);
+    }).then(function(payload) {
+        var tokens = extractQrSessionTokens(payload);
+
+        if (!tokens || !tokens.accessToken) {
+            throw new Error('QR auth bootstrap did not return a session token');
+        }
+
+        state.qrAuthAccessToken = tokens.accessToken;
+        state.qrAuthRefreshToken = tokens.refreshToken || null;
+        return tokens.accessToken;
+    });
+}
+
+function startQrRpc(deviceNonce, includeDeviceName) {
+    var body = {
+        p_device_nonce: deviceNonce,
+        p_redirect_base_url: TV_LOGIN_REDIRECT_BASE_URL
+    };
+
+    if (includeDeviceName) {
+        body.p_device_name = 'StremioTest TV';
+    }
+
+    return requestJsonWithHeaders(
+        SUPABASE_URL + '/rest/v1/rpc/start_tv_login_session',
+        'POST',
+        body,
+        getQrAuthHeaders()
+    ).then(function(payload) {
+        return Array.isArray(payload) ? payload[0] : payload;
+    });
+}
+
+function extractQrApprovedSession(result) {
+    var candidates = [
+        result,
+        result && result.data,
+        result && result.result,
+        result && result.session,
+        result && result.stremio,
+        result && result.stremioSession,
+        result && result.stremio_session,
+        result && result.credentials
+    ];
+    var found = null;
+
+    candidates.some(function(candidate) {
+        var authKey;
+        var user;
+
+        if (Array.isArray(candidate)) {
+            candidate = candidate[0];
+        }
+        if (!candidate || typeof candidate !== 'object') {
+            return false;
+        }
+
+        authKey = candidate.authKey
+            || candidate.auth_key
+            || candidate.stremioAuthKey
+            || candidate.stremio_auth_key
+            || (candidate.stremio && candidate.stremio.authKey)
+            || (candidate.stremio && candidate.stremio.auth_key)
+            || (candidate.credentials && candidate.credentials.authKey)
+            || (candidate.credentials && candidate.credentials.auth_key)
+            || null;
+        user = candidate.user
+            || candidate.stremioUser
+            || candidate.stremio_user
+            || (candidate.stremio && candidate.stremio.user)
+            || (candidate.credentials && candidate.credentials.user)
+            || null;
+
+        if (!authKey) {
+            return false;
+        }
+
+        found = {
+            authKey: authKey,
+            user: user || null
+        };
+        return true;
+    });
+
+    return found;
+}
+
+function resolveQrApprovedUser(session) {
+    if (session.user) {
+        return Promise.resolve(session.user);
+    }
+
+    return requestJson(API_BASE + '/api/getUser', 'POST', {
+        authKey: session.authKey
+    }).then(function(payload) {
+        return payload && payload.user ? payload.user : payload;
+    }).catch(function() {
+        return null;
+    });
+}
+
+function stopQrLoginSession(resetUi) {
+    clearQrLoginTimers();
+    state.qrSessionId += 1;
+    state.qrStarting = false;
+    state.qrCode = null;
+    state.qrLoginUrl = '';
+    state.qrDeviceNonce = '';
+    state.qrExpiresAt = 0;
+
+    if (resetUi && !state.authKey) {
+        renderQrLoginPlaceholder(
+            'Preparing QR sign-in…',
+            'Waiting for a fresh QR session.',
+            'Open the QR code on your phone to approve sign-in.',
+            null
+        );
+    }
+}
+
+function exchangeQrLoginSession(sessionId) {
+    return requestJsonWithHeaders(
+        SUPABASE_URL + '/functions/v1/tv-logins-exchange',
+        'POST',
+        {
+            code: state.qrCode,
+            device_nonce: state.qrDeviceNonce
+        },
+        getQrAuthHeaders()
+    ).then(function(result) {
+        var session = extractQrApprovedSession(result);
+
+        if (sessionId !== state.qrSessionId) {
+            return null;
+        }
+
+        if (!session || !session.authKey) {
+            throw new Error('QR sign-in completed, but no Stremio auth key was returned');
+        }
+
+        return resolveQrApprovedUser(session).then(function(user) {
+            storeSession(session.authKey, user || session.user || null);
+            updateSessionStatus('Signed in', true, false);
+            setLoginMessage('Signed in successfully via QR code.', 'success');
+            renderQrLoginSignedIn();
+            return fetchInstalledAddons().then(function() {
+                setView('home', {
+                    focusRegion: 'main',
+                    resetMain: true
+                });
+            });
+        });
+    });
+}
+
+function pollQrLoginSession(sessionId) {
+    return requestJsonWithHeaders(
+        SUPABASE_URL + '/rest/v1/rpc/poll_tv_login_session',
+        'POST',
+        {
+            p_code: state.qrCode,
+            p_device_nonce: state.qrDeviceNonce
+        },
+        getQrAuthHeaders()
+    ).then(function(payload) {
+        var result = Array.isArray(payload) ? payload[0] : payload;
+        var status = result && result.status ? result.status : null;
+
+        if (sessionId !== state.qrSessionId || !status) {
+            return;
+        }
+
+        if (status === 'approved') {
+            clearQrLoginTimers();
+            setQrExpiryMessage('Phone approved. Finishing TV sign-in…');
+            return exchangeQrLoginSession(sessionId).catch(function(error) {
+                setQrLoginMessage('QR login failed: ' + error.message, 'error');
+                setQrExpiryMessage('Refresh the QR code and try again.');
+            });
+        }
+
+        if (status === 'expired') {
+            clearQrLoginTimers();
+            setQrLoginMessage('This QR code expired. Refresh it to continue.', 'error');
+            setQrExpiryMessage('Expired');
+            return;
+        }
+
+        setQrLoginMessage('Waiting for phone approval…', null);
+    }).catch(function(error) {
+        if (sessionId !== state.qrSessionId) {
+            return;
+        }
+        clearQrLoginTimers();
+        setQrLoginMessage('QR login failed: ' + error.message, 'error');
+        setQrExpiryMessage('Refresh the QR code and try again.');
+    });
+}
+
+function startQrLoginSession(forceRefresh) {
+    var sessionId;
+    var deviceNonce;
+
+    if (state.currentView !== 'login') {
+        return Promise.resolve();
+    }
+
+    if (state.authKey && !forceRefresh) {
+        renderQrLoginSignedIn();
+        return Promise.resolve();
+    }
+
+    if (state.qrStarting) {
+        return Promise.resolve();
+    }
+
+    stopQrLoginSession(false);
+    state.qrStarting = true;
+    sessionId = state.qrSessionId + 1;
+    state.qrSessionId = sessionId;
+    deviceNonce = generateQrDeviceNonce();
+    state.qrDeviceNonce = deviceNonce;
+
+    renderQrLoginPlaceholder(
+        'Preparing QR sign-in…',
+        'Creating a fresh TV login session.',
+        'Open the QR code on your phone to approve sign-in.',
+        null
+    );
+
+    if (byId('qrRefreshButton')) {
+        byId('qrRefreshButton').disabled = true;
+    }
+
+    return ensureQrAnonymousSession().then(function() {
+        return startQrRpc(deviceNonce, true).catch(function(error) {
+            if (error.message && error.message.indexOf('p_device_name') !== -1) {
+                return startQrRpc(deviceNonce, false);
+            }
+            throw error;
+        });
+    }).then(function(session) {
+        var qrImageUrl;
+        var pollSeconds;
+
+        if (sessionId !== state.qrSessionId || !session) {
+            return;
+        }
+
+        qrImageUrl = session.qr_image_url
+            || 'https://api.qrserver.com/v1/create-qr-code/?size=260x260&data=' + encodeURIComponent(session.qr_content || session.web_url || '');
+        pollSeconds = Math.max(2, Number(session.poll_interval_seconds || 3));
+
+        state.qrCode = session.code;
+        state.qrLoginUrl = session.qr_content || session.web_url || '';
+        state.qrExpiresAt = Date.parse(session.expires_at || '') || (Date.now() + 5 * 60 * 1000);
+        state.qrStarting = false;
+
+        renderQrLoginSession({
+            code: session.code,
+            qrImageUrl: qrImageUrl
+        });
+        startQrCountdown();
+        state.qrPollTimer = setInterval(function() {
+            pollQrLoginSession(sessionId);
+        }, pollSeconds * 1000);
+        pollQrLoginSession(sessionId);
+    }).catch(function(error) {
+        if (sessionId !== state.qrSessionId) {
+            return;
+        }
+        state.qrStarting = false;
+        renderQrLoginPlaceholder(
+            'QR sign-in unavailable',
+            'Refresh the QR code to try again.',
+            'QR login failed: ' + error.message,
+            'error'
+        );
+    }).finally(function() {
+        if (byId('qrRefreshButton')) {
+            byId('qrRefreshButton').disabled = false;
+        }
+    });
+}
+
 function storeSession(authKey, user) {
     state.authKey = authKey || null;
     state.user = user || null;
@@ -2218,6 +3005,19 @@ function storeSession(authKey, user) {
     }
 
     updateUserPanel();
+
+    if (state.currentView === 'login') {
+        if (state.authKey) {
+            renderQrLoginSignedIn();
+        } else {
+            renderQrLoginPlaceholder(
+                'Preparing QR sign-in…',
+                'Waiting for a fresh QR session.',
+                'Open the QR code on your phone to approve sign-in.',
+                null
+            );
+        }
+    }
 }
 
 function restoreStoredSession() {
@@ -2293,6 +3093,10 @@ function logout() {
     updateSessionStatus('Signed out', false, false);
     setLoginMessage('Signed out locally.', null);
     setAddonsMessage('Sign in and choose a title to load addon streams.', null);
+
+    if (state.currentView === 'login') {
+        startQrLoginSession(false);
+    }
 }
 
 function fetchInstalledAddons() {
@@ -2345,6 +3149,35 @@ function getStreamCapableAddons(type, id) {
     });
 }
 
+function getSubtitleCapableAddons(type, id) {
+    return state.addons.filter(function(addon) {
+        var resources = addon && addon.manifest && addon.manifest.resources;
+        if (!resources || !resources.length) {
+            return false;
+        }
+
+        return resources.some(function(resource) {
+            var resourceName = typeof resource === 'string' ? resource : resource.name;
+            var resourceTypes = typeof resource === 'string' ? null : resource.types;
+            var idPrefixes = typeof resource === 'string' ? null : resource.idPrefixes;
+
+            if (resourceName !== 'subtitles') {
+                return false;
+            }
+            if (resourceTypes && resourceTypes.length && resourceTypes.indexOf(type) === -1) {
+                return false;
+            }
+            if (idPrefixes && idPrefixes.length && id) {
+                return idPrefixes.some(function(prefix) {
+                    return id.indexOf(prefix) === 0;
+                });
+            }
+
+            return true;
+        });
+    });
+}
+
 function addonBaseUrl(transportUrl) {
     if (!transportUrl || transportUrl.indexOf('http') !== 0) {
         return null;
@@ -2353,6 +3186,154 @@ function addonBaseUrl(transportUrl) {
         return transportUrl.split('/manifest.json')[0];
     }
     return null;
+}
+
+function getStreamBehaviorHints(streamEntry) {
+    var raw = streamEntry && streamEntry.raw ? streamEntry.raw : null;
+    return raw && raw.behaviorHints ? raw.behaviorHints : {};
+}
+
+function deriveFilenameFromUrl(url) {
+    var cleanUrl;
+    var filename = '';
+
+    if (!url) {
+        return '';
+    }
+
+    cleanUrl = String(url).split('#')[0].split('?')[0];
+    filename = cleanUrl.slice(cleanUrl.lastIndexOf('/') + 1);
+
+    try {
+        return decodeURIComponent(filename);
+    } catch (error) {
+        return filename;
+    }
+}
+
+function buildSubtitleExtraArgs(streamEntry) {
+    var raw = streamEntry && streamEntry.raw ? streamEntry.raw : null;
+    var hints = getStreamBehaviorHints(streamEntry);
+    var parts = [];
+    var videoHash = hints.videoHash || raw && raw.videoHash || '';
+    var videoSize = hints.videoSize || raw && raw.videoSize || '';
+    var filename = hints.filename || raw && raw.filename || deriveFilenameFromUrl(raw && raw.url);
+
+    if (videoHash) {
+        parts.push('videoHash=' + encodeURIComponent(String(videoHash)));
+    }
+    if (videoSize) {
+        parts.push('videoSize=' + encodeURIComponent(String(videoSize)));
+    }
+    if (filename) {
+        parts.push('filename=' + encodeURIComponent(String(filename)));
+    }
+
+    return parts.join('&');
+}
+
+function buildSubtitleTrackLabel(track, addonName, index) {
+    var info = track || {};
+    var baseLabel = info.label || info.name || '';
+    var language = info.lang || info.language || '';
+    var normalized = normalizeTrackLabel('subtitle', {
+        language: language,
+        label: baseLabel
+    }, index);
+
+    if (addonName && normalized.indexOf(addonName) === -1) {
+        return normalized + ' • ' + addonName;
+    }
+
+    return normalized;
+}
+
+function normalizeAddonSubtitleTracks(addonName, baseUrl, subtitles) {
+    return (subtitles || []).map(function(track, index) {
+        var url = track && (track.url || track.src || track.file);
+
+        if (!url) {
+            return null;
+        }
+
+        return {
+            id: 'subtitle-ext-addon-' + addonName.replace(/[^a-z0-9]+/ig, '-').toLowerCase() + '-' + index,
+            index: index,
+            kind: 'external',
+            url: resolveUrl(baseUrl, url),
+            headers: getSubtitleRequestHeaders(null, track),
+            language: track.lang || track.language || '',
+            label: buildSubtitleTrackLabel(track, addonName, index)
+        };
+    }).filter(Boolean);
+}
+
+function fetchSubtitlesFromAddon(addon, type, videoId, streamEntry) {
+    var baseUrl = addonBaseUrl(addon.transportUrl);
+    var addonName = addon.manifest && addon.manifest.name ? addon.manifest.name : 'Addon';
+    var extraArgs = buildSubtitleExtraArgs(streamEntry);
+    var requestUrl;
+
+    if (!baseUrl) {
+        return Promise.resolve([]);
+    }
+
+    requestUrl = baseUrl
+        + '/subtitles/'
+        + encodeURIComponent(type)
+        + '/'
+        + encodeURIComponent(videoId)
+        + (extraArgs ? '/' + extraArgs : '')
+        + '.json';
+
+    return requestJson(requestUrl, 'GET').then(function(payload) {
+        var subtitles = payload && Array.isArray(payload.subtitles) ? payload.subtitles : [];
+        return normalizeAddonSubtitleTracks(addonName, baseUrl, subtitles);
+    }).catch(function() {
+        return [];
+    });
+}
+
+function refreshSubtitleAddonsForCurrentStream() {
+    var streamEntry = state.currentStream;
+    var type = state.selectedType;
+    var videoId = state.selectedVideo && state.selectedVideo.id;
+    var subtitleAddons;
+    var requestId;
+
+    if (!streamEntry || !type || !videoId) {
+        state.addonSubtitleTracks = [];
+        updateExternalSubtitleTracks();
+        renderTrackSelectors();
+        return Promise.resolve();
+    }
+
+    subtitleAddons = getSubtitleCapableAddons(type, videoId);
+    requestId = state.subtitleRequestId + 1;
+    state.subtitleRequestId = requestId;
+    state.addonSubtitleTracks = [];
+    updateExternalSubtitleTracks();
+    renderTrackSelectors();
+
+    if (!subtitleAddons.length) {
+        return Promise.resolve();
+    }
+
+    return Promise.all(subtitleAddons.map(function(addon) {
+        return fetchSubtitlesFromAddon(addon, type, videoId, streamEntry);
+    })).then(function(groups) {
+        if (requestId !== state.subtitleRequestId || streamEntry !== state.currentStream) {
+            return;
+        }
+
+        state.addonSubtitleTracks = [];
+        groups.forEach(function(group) {
+            state.addonSubtitleTracks = state.addonSubtitleTracks.concat(group);
+        });
+        updateExternalSubtitleTracks();
+        renderTrackSelectors();
+        applyPreferredSubtitleSelection();
+    });
 }
 
 function fetchStreamsFromAddon(addon, type, videoId) {
@@ -2588,6 +3569,7 @@ function renderPlayerState() {
     setPlayerToggleUi(false);
 
     if (!stream) {
+        resetTrackState();
         byId('playerTitle').textContent = 'No stream selected';
         byId('playerAddon').textContent = '-';
         byId('playerSource').textContent = '-';
@@ -2778,6 +3760,7 @@ function loadCurrentStream() {
     resetTrackState();
     syncExternalSubtitleTracks();
     renderTrackSelectors();
+    refreshSubtitleAddonsForCurrentStream();
 
     if (hasAvplay()) {
         startAvplayStream(state.currentStream.raw.url);
@@ -2787,6 +3770,7 @@ function loadCurrentStream() {
 }
 
 function openStream(streamEntry) {
+    resetTrackState();
     state.currentStream = streamEntry;
     trackContinueWatching(state.selectedItem, state.selectedType, state.selectedVideo);
     renderContinueWatching();
@@ -2806,87 +3790,255 @@ function openStream(streamEntry) {
 
 function renderCatalogViews() {
     renderContinueWatching();
-    renderCards('homeMovieRail', state.movies.slice(0, 8), 'movie');
-    renderCards('homeSeriesRail', state.series.slice(0, 8), 'series');
+    renderHomeRailWindow('homeMovieRail', state.movies.slice(0, 18).map(function(item) {
+        return { item: item, kind: 'movie' };
+    }), 'movies');
+    renderHomeRailWindow('homeSeriesRail', state.series.slice(0, 18).map(function(item) {
+        return { item: item, kind: 'series' };
+    }), 'series');
 
     byId('homeMovieCount').textContent = state.movies.length + ' ready';
     byId('homeSeriesCount').textContent = state.series.length + ' ready';
-
-    if (state.continueWatching.length) {
-        updateFeatured(state.continueWatching[0].item, state.continueWatching[0].kind === 'series' ? 'Series Spotlight' : 'Movie Spotlight');
-    } else if (state.movies.length) {
-        updateFeatured(state.movies[0], 'Movie Spotlight');
-    } else if (state.series.length) {
-        updateFeatured(state.series[0], 'Series Spotlight');
-    }
+    refreshFeaturedRotation();
 }
 
-function updateSearchScopeUi() {
-    byId('searchScopeAll').classList.toggle('is-selected', state.searchScope === 'all');
-    byId('searchScopeMovies').classList.toggle('is-selected', state.searchScope === 'movies');
-    byId('searchScopeSeries').classList.toggle('is-selected', state.searchScope === 'series');
+function getCircularHomeWindow(entries, startIndex, count) {
+    var windowItems = [];
+    var total = entries.length;
+    var visibleCount = Math.min(count, total);
+    var normalized = startIndex;
+    var index = 0;
+
+    if (!total) {
+        return windowItems;
+    }
+
+    normalized = ((normalized % total) + total) % total;
+
+    for (index = 0; index < visibleCount; index += 1) {
+        windowItems.push(entries[(normalized + index) % total]);
+    }
+
+    return windowItems;
+}
+
+function renderSingleHomeRail(descriptor) {
+    if (!descriptor) {
+        return;
+    }
+
+    renderHomeRailWindow(descriptor.containerId, descriptor.entries, descriptor.key);
+}
+
+function getDefaultSearchSuggestions() {
+    var suggestions = [];
+    var seen = {};
+
+    state.continueWatching.forEach(function(entry) {
+        if (entry && entry.item && entry.item.id && !seen[entry.item.id]) {
+            entry.item.__kind = entry.kind;
+            suggestions.push(entry.item);
+            seen[entry.item.id] = true;
+        }
+    });
+
+    state.movies.slice(0, 3).forEach(function(item) {
+        if (item && item.id && !seen[item.id]) {
+            item.__kind = 'movie';
+            suggestions.push(item);
+            seen[item.id] = true;
+        }
+    });
+
+    state.series.slice(0, 3).forEach(function(item) {
+        if (item && item.id && !seen[item.id]) {
+            item.__kind = 'series';
+            suggestions.push(item);
+            seen[item.id] = true;
+        }
+    });
+
+    return suggestions.slice(0, 4);
+}
+
+function syncSearchDisplay() {
+    byId('searchDisplayValue').textContent = state.searchQuery || 'Search titles';
+}
+
+function buildMixedSearchResults() {
+    var mixed = [];
+    var index = 0;
+    var maxLength = Math.max(state.searchMovies.length, state.searchSeries.length);
+
+    for (index = 0; index < maxLength; index += 1) {
+        if (state.searchMovies[index]) {
+            state.searchMovies[index].__kind = 'movie';
+            mixed.push(state.searchMovies[index]);
+        }
+        if (state.searchSeries[index]) {
+            state.searchSeries[index].__kind = 'series';
+            mixed.push(state.searchSeries[index]);
+        }
+    }
+
+    return mixed.slice(0, 16);
+}
+
+function renderSearchSuggestions() {
+    var container = byId('searchSuggestionList');
+    var suggestions = state.searchSuggestions.length ? state.searchSuggestions : getDefaultSearchSuggestions();
+
+    container.innerHTML = '';
+
+    suggestions.forEach(function(item) {
+        var button = document.createElement('button');
+        button.className = 'search-suggestion';
+        button.type = 'button';
+        button.setAttribute('tabindex', '-1');
+        button.textContent = item.name || 'Untitled';
+        button.addEventListener('click', function() {
+            state.searchQuery = item.name || '';
+            syncSearchDisplay();
+            scheduleSearchCatalogs();
+        });
+        container.appendChild(button);
+    });
+}
+
+function renderSearchKeyboard() {
+    var container = byId('searchKeyboard');
+
+    container.innerHTML = '';
+
+    SEARCH_KEYBOARD_ROWS.forEach(function(row, rowIndex) {
+        var rowEl = document.createElement('div');
+        rowEl.className = 'search-keyboard-row';
+        rowEl.id = 'searchKeyboardRow' + rowIndex;
+
+        row.forEach(function(key) {
+            var button = document.createElement('button');
+            button.className = 'search-key';
+            button.type = 'button';
+            button.setAttribute('tabindex', '-1');
+            button.setAttribute('data-key', key);
+
+            if (key === 'space') {
+                button.classList.add('is-wide');
+                button.textContent = 'Space';
+            } else if (key === 'backspace') {
+                button.classList.add('is-wide');
+                button.textContent = 'Delete';
+            } else if (key === 'clear') {
+                button.classList.add('is-wide');
+                button.textContent = 'Clear';
+            } else {
+                button.textContent = key;
+            }
+
+            button.addEventListener('click', function() {
+                applySearchKey(key);
+            });
+            rowEl.appendChild(button);
+        });
+
+        container.appendChild(rowEl);
+    });
 }
 
 function renderSearchResults() {
-    var movieSection = byId('searchMovieSection');
-    var seriesSection = byId('searchSeriesSection');
-    var total = state.searchMovies.length + state.searchSeries.length;
+    var total = state.searchResults.length;
+    var empty = byId('searchEmptyState');
 
-    renderCardRows('searchMovieGrid', state.searchMovies, 'movie', 4);
-    renderCardRows('searchSeriesGrid', state.searchSeries, 'series', 4);
+    renderCardRows('searchResultGrid', state.searchResults, null, 4);
 
-    byId('searchMovieCount').textContent = state.searchMovies.length + ' result' + (state.searchMovies.length === 1 ? '' : 's');
-    byId('searchSeriesCount').textContent = state.searchSeries.length + ' result' + (state.searchSeries.length === 1 ? '' : 's');
     byId('searchResultCount').textContent = total ? total + ' result' + (total === 1 ? '' : 's') : 'No results yet';
+    empty.classList.toggle('is-visible', !total);
+    renderSearchSuggestions();
+    syncSearchDisplay();
+}
 
-    movieSection.style.display = state.searchScope === 'series' ? 'none' : 'block';
-    seriesSection.style.display = state.searchScope === 'movies' ? 'none' : 'block';
+function scheduleSearchCatalogs() {
+    if (state.searchDebounceTimer) {
+        clearTimeout(state.searchDebounceTimer);
+        state.searchDebounceTimer = null;
+    }
+
+    state.searchDebounceTimer = setTimeout(function() {
+        state.searchDebounceTimer = null;
+        searchCatalogs();
+    }, 180);
+}
+
+function applySearchKey(key) {
+    if (key === 'backspace') {
+        state.searchQuery = state.searchQuery.slice(0, -1);
+    } else if (key === 'clear') {
+        state.searchQuery = '';
+        state.searchMovies = [];
+        state.searchSeries = [];
+        state.searchResults = [];
+    } else if (key === 'space') {
+        if (state.searchQuery && state.searchQuery.slice(-1) !== ' ') {
+            state.searchQuery += ' ';
+        }
+    } else {
+        state.searchQuery += key;
+    }
+
+    syncSearchDisplay();
+    renderSearchResults();
+    scheduleSearchCatalogs();
 }
 
 function searchCatalogs() {
-    var query = byId('searchInput').value.replace(/^\s+|\s+$/g, '');
+    var query = state.searchQuery.replace(/^\s+|\s+$/g, '');
     var requests = [];
+    var requestId;
 
     state.searchQuery = query;
+    syncSearchDisplay();
+    requestId = state.searchRequestId + 1;
+    state.searchRequestId = requestId;
 
     if (query.length < 2) {
         state.searchMovies = [];
         state.searchSeries = [];
+        state.searchResults = [];
         renderSearchResults();
-        setSearchMessage('Enter at least 2 characters to search live catalogs.', 'error');
+        setSearchMessage('Use the TV keyboard to search live catalogs.', null);
         return Promise.resolve();
     }
 
     setSearchMessage('Searching for "' + query + '"...', null);
 
-    if (state.searchScope === 'all' || state.searchScope === 'movies') {
-        requests.push(
-            requestJson(CINEMETA_BASE + '/catalog/movie/top/search=' + encodeURIComponent(query) + '.json', 'GET')
-                .then(function(payload) {
-                    state.searchMovies = normalizeCatalogPayloadWithLimit(payload, 20);
-                }).catch(function() {
-                    state.searchMovies = [];
-                })
-        );
-    } else {
-        state.searchMovies = [];
-    }
+    requests.push(
+        requestJson(CINEMETA_BASE + '/catalog/movie/top/search=' + encodeURIComponent(query) + '.json', 'GET')
+            .then(function(payload) {
+                state.searchMovies = normalizeCatalogPayloadWithLimit(payload, 20);
+            }).catch(function() {
+                state.searchMovies = [];
+            })
+    );
 
-    if (state.searchScope === 'all' || state.searchScope === 'series') {
-        requests.push(
-            requestJson(CINEMETA_BASE + '/catalog/series/top/search=' + encodeURIComponent(query) + '.json', 'GET')
-                .then(function(payload) {
-                    state.searchSeries = normalizeCatalogPayloadWithLimit(payload, 20);
-                }).catch(function() {
-                    state.searchSeries = [];
-                })
-        );
-    } else {
-        state.searchSeries = [];
-    }
+    requests.push(
+        requestJson(CINEMETA_BASE + '/catalog/series/top/search=' + encodeURIComponent(query) + '.json', 'GET')
+            .then(function(payload) {
+                state.searchSeries = normalizeCatalogPayloadWithLimit(payload, 20);
+            }).catch(function() {
+                state.searchSeries = [];
+            })
+    );
 
     return Promise.all(requests).then(function() {
-        var total = state.searchMovies.length + state.searchSeries.length;
+        var total;
+
+        if (requestId !== state.searchRequestId) {
+            return;
+        }
+
+        state.searchResults = buildMixedSearchResults();
+        state.searchSuggestions = state.searchResults.slice(0, 4);
+        total = state.searchResults.length;
         renderSearchResults();
         if (total) {
             setSearchMessage('Loaded ' + total + ' matching title' + (total === 1 ? '' : 's') + '.', 'success');
@@ -2900,12 +4052,17 @@ function searchCatalogs() {
 }
 
 function createCard(item, kind) {
+    var options = arguments[2] || {};
     var card = document.createElement('button');
     var poster = document.createElement('div');
     var title = document.createElement('div');
     var meta = document.createElement('div');
+    var synopsis = document.createElement('div');
 
     card.className = 'card';
+    if (options.className) {
+        card.className += ' ' + options.className;
+    }
     card.type = 'button';
     card.setAttribute('tabindex', '-1');
 
@@ -2924,15 +4081,18 @@ function createCard(item, kind) {
     title.textContent = item.name || 'Untitled';
 
     meta.className = 'card-meta';
-    meta.textContent = formatMetaLine(item, kind === 'movie' ? 'Movie' : 'Series');
+    meta.textContent = options.metaText || formatMetaLine(item, kind === 'movie' ? 'Movie' : 'Series');
+
+    synopsis.className = 'card-synopsis';
+    synopsis.textContent = item.description || item.releaseInfo || 'Open details, streams, and playback options.';
+    if (options.showSynopsis) {
+        card.classList.add('card-has-static-synopsis');
+    }
 
     card.appendChild(poster);
     card.appendChild(title);
     card.appendChild(meta);
-
-    card.addEventListener('focus', function() {
-        scheduleFeaturedUpdate(item, kind === 'movie' ? 'Movie Spotlight' : 'Series Spotlight');
-    });
+    card.appendChild(synopsis);
 
     card.addEventListener('click', function() {
         prepareSelection(item, kind);
@@ -2945,7 +4105,40 @@ function renderCards(containerId, items, kind) {
     var container = byId(containerId);
     container.innerHTML = '';
     items.forEach(function(item) {
-        container.appendChild(createCard(item, kind));
+        container.appendChild(createCard(item, item.__kind || kind));
+    });
+}
+
+function renderHomeRailWindow(containerId, entries, key) {
+    var container = byId(containerId);
+    var index;
+    var visible;
+
+    container.innerHTML = '';
+    container.classList.add('rail-home-window');
+
+    if (!entries.length) {
+        state.homeRailIndices[key] = 0;
+        return;
+    }
+
+    index = state.homeRailIndices[key] || 0;
+    if (index < 0) {
+        index = 0;
+    }
+    if (index >= entries.length) {
+        index = 0;
+    }
+    state.homeRailIndices[key] = index;
+
+    visible = getCircularHomeWindow(entries, index, 4);
+
+    visible.forEach(function(entry, visibleIndex) {
+        container.appendChild(createCard(entry.item, entry.kind, {
+            className: visibleIndex === 0 ? 'is-home-active' : 'is-home-compact',
+            metaText: entry.metaText,
+            showSynopsis: visibleIndex === 0
+        }));
     });
 }
 
@@ -2960,7 +4153,7 @@ function renderCardRows(containerId, items, kind, rowSize) {
         row.id = containerId + 'Row' + index;
 
         group.forEach(function(item) {
-            row.appendChild(createCard(item, kind));
+            row.appendChild(createCard(item, item.__kind || kind));
         });
 
         container.appendChild(row);
@@ -2982,18 +4175,9 @@ function renderContinueWatching() {
 
     section.style.display = 'block';
     count.textContent = state.continueWatching.length + ' saved';
-    state.continueWatching.forEach(function(entry) {
-        var card = createCard(entry.item, entry.kind);
-        var meta = card.querySelector('.card-meta');
+    renderHomeRailWindow('continueRail', buildContinueEntries(), 'continue');
 
-        if (entry.kind === 'series' && entry.video) {
-            meta.textContent = 'Resume • Season ' + entry.video.season + ' • Episode ' + entry.video.episode;
-        } else {
-            meta.textContent = 'Resume watching';
-        }
-
-        container.appendChild(card);
-    });
+    refreshFeaturedRotation();
 }
 
 function prepareSelection(item, type, options) {
@@ -3196,44 +4380,9 @@ function bindDetailActions() {
 }
 
 function bindSearch() {
-    function setScope(scope) {
-        state.searchScope = scope;
-        updateSearchScopeUi();
-        renderSearchResults();
-    }
-
-    byId('searchScopeAll').addEventListener('click', function() {
-        setScope('all');
-    });
-
-    byId('searchScopeMovies').addEventListener('click', function() {
-        setScope('movies');
-    });
-
-    byId('searchScopeSeries').addEventListener('click', function() {
-        setScope('series');
-    });
-
-    byId('searchSubmitButton').addEventListener('click', function() {
-        searchCatalogs();
-    });
-
-    byId('searchClearButton').addEventListener('click', function() {
-        byId('searchInput').value = '';
-        state.searchQuery = '';
-        state.searchMovies = [];
-        state.searchSeries = [];
-        renderSearchResults();
-        setSearchMessage('Enter at least 2 characters to search live catalogs.', null);
-        setTimeout(focusCurrent, 0);
-    });
-
-    byId('searchInput').addEventListener('keydown', function(event) {
-        if (event.keyCode === 13) {
-            event.preventDefault();
-            searchCatalogs();
-        }
-    });
+    renderSearchKeyboard();
+    renderSearchSuggestions();
+    syncSearchDisplay();
 }
 
 function bindBrowse() {
@@ -3268,6 +4417,10 @@ function bindLogin() {
 
     byId('logoutButton').addEventListener('click', function() {
         logout();
+    });
+
+    byId('qrRefreshButton').addEventListener('click', function() {
+        startQrLoginSession(true);
     });
 }
 
@@ -3368,6 +4521,23 @@ function handleLeft() {
         return;
     }
 
+    if (state.currentView === 'home' && state.focusRegion === 'main' && state.mainRow > 0) {
+        var homeRailLeft = getHomeRailDescriptorForMainRow(state.mainRow);
+        if (homeRailLeft) {
+            if (state.homeRailIndices[homeRailLeft.key] > 0) {
+                state.homeRailIndices[homeRailLeft.key] -= 1;
+                state.mainCol = 0;
+                renderSingleHomeRail(homeRailLeft);
+                focusCurrent();
+                return;
+            }
+
+            state.focusRegion = 'nav';
+            focusCurrent();
+            return;
+        }
+    }
+
     if (state.focusRegion === 'nav') {
         if (state.navIndex > 0) {
             state.navIndex -= 1;
@@ -3379,6 +4549,19 @@ function handleLeft() {
             focusCurrent();
         }
         return;
+    }
+
+    if (state.currentView === 'search') {
+        var searchPaneInfo = getSearchPaneInfo();
+        if (searchPaneInfo.resultRows && state.mainRow >= searchPaneInfo.firstResultRow && state.mainCol === 0) {
+            state.mainRow = Math.min(
+                Math.max(searchPaneInfo.leftRowCount - 1, 0),
+                state.mainRow - searchPaneInfo.firstResultRow
+            );
+            state.mainCol = 0;
+            focusCurrent();
+            return;
+        }
     }
 
     if (state.mainCol > 0) {
@@ -3405,6 +4588,17 @@ function handleRight() {
         return;
     }
 
+    if (state.currentView === 'home' && state.focusRegion === 'main' && state.mainRow > 0) {
+        var homeRailRight = getHomeRailDescriptorForMainRow(state.mainRow);
+        if (homeRailRight) {
+            state.homeRailIndices[homeRailRight.key] = (state.homeRailIndices[homeRailRight.key] + 1) % homeRailRight.entries.length;
+            state.mainCol = 0;
+            renderSingleHomeRail(homeRailRight);
+            focusCurrent();
+            return;
+        }
+    }
+
     if (state.focusRegion === 'nav') {
         if (state.navIndex < NAV_VIEWS.length - 1) {
             state.navIndex += 1;
@@ -3417,6 +4611,23 @@ function handleRight() {
             return;
         }
         return;
+    }
+
+    if (state.currentView === 'search') {
+        var searchPaneInfo = getSearchPaneInfo();
+        if (searchPaneInfo.resultRows && state.mainRow < searchPaneInfo.firstResultRow) {
+            var searchRows = getMainRows();
+            var currentSearchRow = searchRows[state.mainRow] || [];
+            if (currentSearchRow.length && state.mainCol < currentSearchRow.length - 1) {
+                state.mainCol += 1;
+                focusCurrent();
+                return;
+            }
+            state.mainRow = searchPaneInfo.firstResultRow;
+            state.mainCol = 0;
+            focusCurrent();
+            return;
+        }
     }
 
     state.mainCol += 1;
@@ -3538,11 +4749,11 @@ function init() {
     updateNavState();
     updateViewState();
     updatePageHeader();
-    updateSearchScopeUi();
     renderSearchResults();
     renderContinueWatching();
     renderAddons();
     renderPlayerState();
+    startFeaturedRotation();
 
     verifyStoredSession().then(function() {
         return Promise.all([

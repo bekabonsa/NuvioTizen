@@ -45,8 +45,6 @@
             </nav>
 
             <div class="utility-cluster">
-                <span class="status-pill" id="connectionStatus">Checking...</span>
-                <span class="status-pill" id="sessionStatus">Signed out</span>
                 <div class="profile-pill">
                     <span class="top-account-label">Profile</span>
                     <span class="top-account-value" id="topAccountLabel">Guest</span>
@@ -179,53 +177,46 @@
                 </section>
 
                 <section class="view view-search" data-view-panel="search">
-                    <section class="browse-shelf browse-shelf-hero content-row" id="searchFormSection">
-                        <div class="section-header">
-                            <div>
-                                <span class="section-kicker">Discover</span>
-                                <h2>Search</h2>
-                            </div>
-                            <span class="section-count" id="searchResultCount">No results yet</span>
-                        </div>
-                        <p class="section-copy">Search Cinemeta for films and series, then jump straight into details and streams.</p>
-                        <div class="search-toolbar">
-                            <label class="field search-field">
-                                <span>Search term</span>
-                                <input id="searchInput" type="text" autocomplete="off" placeholder="Search titles" />
-                            </label>
-                            <div class="search-scope-group" id="searchScopeGroup">
-                                <button class="action-button search-scope is-selected" id="searchScopeAll" type="button">All</button>
-                                <button class="action-button search-scope" id="searchScopeMovies" type="button">Films</button>
-                                <button class="action-button search-scope" id="searchScopeSeries" type="button">Series</button>
-                            </div>
-                            <div class="action-row search-actions">
-                                <button class="action-button action-primary" id="searchSubmitButton" type="button">Search</button>
-                                <button class="action-button" id="searchClearButton" type="button">Clear</button>
-                            </div>
-                        </div>
-                        <p class="helper" id="searchMessage">Enter at least 2 characters to search live catalogs.</p>
-                    </section>
+                    <section class="search-shell content-row" id="searchShellSection">
+                        <div class="search-panel-left">
+                            <section class="search-keyboard-card">
+                                <div class="search-query-line">
+                                    <svg class="search-query-icon" viewBox="0 0 24 24" aria-hidden="true">
+                                        <circle cx="11" cy="11" r="6.5"></circle>
+                                        <path d="M16.2 16.2L21 21"></path>
+                                    </svg>
+                                    <span class="search-query-text" id="searchDisplayValue">Search titles</span>
+                                </div>
+                                <p class="helper search-helper" id="searchMessage">Use the on-screen keyboard to search live catalogs.</p>
+                                <div class="search-keyboard" id="searchKeyboard"></div>
+                            </section>
 
-                    <section class="browse-shelf content-row" id="searchMovieSection">
-                        <div class="section-header">
-                            <div>
-                                <span class="section-kicker">Results</span>
-                                <h2>Films</h2>
-                            </div>
-                            <span class="section-count" id="searchMovieCount">0 results</span>
+                            <section class="search-suggestions-card">
+                                <div class="section-header">
+                                    <div>
+                                        <span class="section-kicker">Suggestions</span>
+                                        <h2>Quick picks</h2>
+                                    </div>
+                                </div>
+                                <div class="search-suggestion-list" id="searchSuggestionList"></div>
+                            </section>
                         </div>
-                        <div class="card-row-stack" id="searchMovieGrid"></div>
-                    </section>
 
-                    <section class="browse-shelf content-row" id="searchSeriesSection">
-                        <div class="section-header">
-                            <div>
-                                <span class="section-kicker">Results</span>
-                                <h2>Series</h2>
-                            </div>
-                            <span class="section-count" id="searchSeriesCount">0 results</span>
+                        <div class="search-panel-right">
+                            <section class="search-results-card" id="searchResultsSection">
+                                <div class="section-header">
+                                    <div>
+                                        <span class="section-kicker">Results</span>
+                                        <h2>Matching titles</h2>
+                                    </div>
+                                    <span class="section-count" id="searchResultCount">No results yet</span>
+                                </div>
+                                <div class="search-results-grid" id="searchResultGrid"></div>
+                                <div class="search-empty-state" id="searchEmptyState">
+                                    Type with the TV keyboard to see live movie and series results.
+                                </div>
+                            </section>
                         </div>
-                        <div class="card-row-stack" id="searchSeriesGrid"></div>
                     </section>
                 </section>
 
@@ -416,6 +407,32 @@
 
                             <p class="helper" id="loginMessage">Use your Stremio account here.</p>
                         </form>
+
+                        <section class="qr-login-card content-row" id="qrLoginCard">
+                            <span class="section-kicker">Quick Sign-In</span>
+                            <h2>Sign in with your phone</h2>
+                            <p class="section-copy">
+                                Scan the QR code to connect this TV shell without typing your Stremio credentials on the remote.
+                            </p>
+
+                            <div class="qr-login-frame">
+                                <img
+                                    id="qrLoginImage"
+                                    class="qr-login-image"
+                                    alt="QR code for TV sign in"
+                                    src=""
+                                />
+                            </div>
+
+                            <div class="qr-login-code" id="qrLoginCode">Preparing QR sign-in…</div>
+                            <div class="qr-login-expiry" id="qrLoginExpiry">Waiting for a fresh QR session.</div>
+
+                            <div class="action-row">
+                                <button type="button" class="action-button" id="qrRefreshButton">Refresh QR</button>
+                            </div>
+
+                            <p class="helper" id="qrLoginMessage">Open the QR code on your phone to approve sign-in.</p>
+                        </section>
 
                         <section class="account-card content-row">
                             <span class="section-kicker">Session</span>
