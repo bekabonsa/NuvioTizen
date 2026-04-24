@@ -3,10 +3,9 @@
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
-    <meta name="description" content="Nuvio TV shell with live catalogs, addons, and player" />
-    <title>Nuvio TV</title>
+    <meta name="description" content="Nuvio web shell with live catalogs, addons, and desktop playback" />
+    <title>Nuvio Web</title>
     <link rel="stylesheet" type="text/css" href="css/style.css" />
-    <script src="$WEBAPIS/webapis/webapis.js"></script>
     <script defer src="js/main.js"></script>
 </head>
 <body data-current-view="home">
@@ -17,7 +16,7 @@
                     <img src="images/nuvio-logo.png" alt="Nuvio" class="brand-logo" />
                 </div>
                 <div class="brand-copy">
-                    <span class="brand-kicker">Connected TV</span>
+                    <span class="brand-kicker">Desktop Web</span>
                     <span class="brand-title">Nuvio</span>
                 </div>
             </div>
@@ -44,20 +43,17 @@
                 </button>
             </nav>
 
-            <div class="utility-cluster">
-                <div class="profile-pill">
-                    <span class="top-account-label">Profile</span>
-                    <span class="top-account-value" id="topAccountLabel">Guest</span>
-                    <span class="visually-hidden" id="sideUserLabel">Guest</span>
-                </div>
-            </div>
+            <span class="visually-hidden" id="connectionStatus">Connecting</span>
+            <span class="visually-hidden" id="sessionStatus">Checking session</span>
+            <span class="visually-hidden" id="topAccountLabel">Guest</span>
+            <span class="visually-hidden" id="sideUserLabel">Guest</span>
         </header>
 
         <main class="content-shell" id="contentShell">
             <header class="page-header">
                 <div class="page-kicker" id="pageEyebrow">Discover</div>
                 <h1 class="page-title" id="pageTitle">Home</h1>
-                <p class="page-subtitle" id="pageSubtitle">Browse live addon-backed content in a TV-first shell.</p>
+                <p class="page-subtitle" id="pageSubtitle">Browse live addon-backed content in a desktop-first shell.</p>
             </header>
 
             <div class="view-stack">
@@ -70,7 +66,7 @@
                                 <h2 class="featured-title" id="featuredTitle">Top picks from your linked catalogs</h2>
                                 <p class="featured-meta" id="featuredMeta">Use the top bar to move between pages.</p>
                                 <p class="featured-description" id="featuredDescription">
-                                    This shell keeps the TV project intact while moving the experience onto Nuvio-backed auth and addon sync.
+                                    This branch keeps the streaming flows intact while adapting the experience for desktop browsing, mouse input, and keyboard search.
                                 </p>
                                 <div class="action-row hero-actions" id="homeActions">
                                     <button class="action-button action-primary" id="homeLoginButton" type="button">Play</button>
@@ -177,9 +173,13 @@
                 </section>
 
                 <section class="view view-search" data-view-panel="search">
-                    <section class="search-shell content-row" id="searchShellSection">
+                    <section class="search-shell search-shell-desktop content-row" id="searchShellSection">
                         <div class="search-panel-left">
-                            <section class="search-keyboard-card">
+                            <section class="search-input-card">
+                                <label class="field search-field">
+                                    <span>Search</span>
+                                    <input id="searchTextInput" type="search" autocomplete="off" placeholder="Type a title, genre, or keyword" />
+                                </label>
                                 <div class="search-query-line">
                                     <svg class="search-query-icon" viewBox="0 0 24 24" aria-hidden="true">
                                         <circle cx="11" cy="11" r="6.5"></circle>
@@ -187,8 +187,7 @@
                                     </svg>
                                     <span class="search-query-text" id="searchDisplayValue">Search titles</span>
                                 </div>
-                                <p class="helper search-helper" id="searchMessage">Use the on-screen keyboard to search linked addon catalogs.</p>
-                                <div class="search-keyboard" id="searchKeyboard"></div>
+                                <p class="helper search-helper" id="searchMessage">Type in the desktop search box to search linked addon catalogs.</p>
                             </section>
 
                             <section class="search-suggestions-card">
@@ -213,7 +212,7 @@
                                 </div>
                                 <div class="search-results-grid" id="searchResultGrid"></div>
                                 <div class="search-empty-state" id="searchEmptyState">
-                                    Type with the TV keyboard to see live movie and series results from your linked catalogs.
+                                    Type in the desktop search box to see live movie and series results from your linked catalogs.
                                 </div>
                             </section>
                         </div>
@@ -255,24 +254,39 @@
                         </div>
                     </section>
 
-                    <section class="browse-shelf content-row" id="seasonSection">
-                        <div class="section-header">
-                            <div>
-                                <span class="section-kicker">Seasons</span>
-                                <h2>Choose a season</h2>
-                            </div>
-                        </div>
-                        <div class="season-rail" id="seasonRail"></div>
-                    </section>
-
                     <section class="browse-shelf content-row" id="episodeSection">
                         <div class="section-header">
                             <div>
                                 <span class="section-kicker">Episodes</span>
-                                <h2>Choose an episode</h2>
+                                <h2>Episode Browser</h2>
+                            </div>
+                            <span class="section-count" id="episodeCountLabel">0 episodes</span>
+                        </div>
+                        <div class="episode-browser">
+                            <article class="episode-preview-card" id="episodePreviewCard">
+                                <div class="episode-preview-art" id="episodePreviewArt"></div>
+                                <div class="episode-preview-body">
+                                    <div class="episode-preview-toolbar">
+                                        <span class="section-kicker" id="episodePreviewEyebrow">Episode preview</span>
+                                        <label class="field season-field episode-season-field" for="seasonSelect">
+                                            <span>Season</span>
+                                            <select id="seasonSelect"></select>
+                                        </label>
+                                    </div>
+                                    <h3 class="episode-preview-title" id="episodePreviewTitle">Choose an episode</h3>
+                                    <p class="episode-preview-meta" id="episodePreviewMeta">No episode selected</p>
+                                    <p class="section-copy episode-preview-description" id="episodePreviewDescription">
+                                        Select an episode from the list to inspect its artwork, summary, and available streams.
+                                    </p>
+                                    <p class="section-copy season-summary" id="seasonSummary">
+                                        Pick a season to browse episodes and streams.
+                                    </p>
+                                </div>
+                            </article>
+                            <div class="episode-list-panel">
+                                <div class="episode-list" id="episodeRail"></div>
                             </div>
                         </div>
-                        <div class="episode-rail" id="episodeRail"></div>
                     </section>
 
                     <section class="browse-shelf content-row" id="streamSection">
@@ -281,16 +295,20 @@
                                 <span class="section-kicker">Sources</span>
                                 <h2>Available streams</h2>
                             </div>
+                            <span class="section-count" id="streamSelectionLabel">Choose an episode</span>
                         </div>
                         <div class="stream-list" id="streamList"></div>
+                        <div class="search-empty-state" id="streamEmptyState">
+                            Pick an episode to load streams from your installed addons.
+                        </div>
                     </section>
                 </section>
 
                 <section class="view view-player" data-view-panel="player">
                     <div class="player-layout">
                         <section class="player-stage-card">
-                            <div class="video-frame" id="videoFrameFocus" tabindex="-1">
-                                <object id="avplaySurface" class="avplay-surface" type="application/avplayer"></object>
+                            <div class="video-frame" id="videoFrameFocus" tabindex="0">
+                                <div id="avplaySurface" class="avplay-surface" aria-hidden="true"></div>
                                 <video id="videoPlayer" class="video-player" playsinline webkit-playsinline preload="auto"></video>
                                 <div class="video-empty" id="videoEmpty">
                                     Pick an addon stream to open the player.
@@ -301,7 +319,7 @@
                                     <div class="player-controller-inner">
                                         <div class="player-progress-meta">
                                             <span class="player-time-value" id="playerCurrentTime">00:00</span>
-                                            <button class="player-progress-button" id="playerProgressButton" type="button" tabindex="-1" aria-label="Seek bar" title="Seek bar">
+                                            <button class="player-progress-button" id="playerProgressButton" type="button" tabindex="0" aria-label="Seek bar" title="Seek bar">
                                                 <div class="player-progress-rail" aria-hidden="true">
                                                     <div class="player-progress-fill" id="playerProgressFill"></div>
                                                 </div>
@@ -389,7 +407,7 @@
                             <form class="login-card" id="loginForm">
                                 <span class="section-kicker">Account</span>
                                 <h2>Sign in to Nuvio</h2>
-                                <p class="section-copy">Use your Nuvio account to connect the TV shell to your synced addons and session.</p>
+                                <p class="section-copy">Use your Nuvio account to connect this web shell to your synced addons and session.</p>
 
                                 <label class="field">
                                     <span>Email</span>
@@ -421,7 +439,7 @@
                                     <span class="account-stat-value account-stat-mono" id="authKeyLabel">Not set</span>
                                 </div>
                                 <div class="account-note" id="accountNote">
-                                    Sign in to keep your Nuvio session active inside this TV shell.
+                                    Sign in to keep your Nuvio session active inside this browser session.
                                 </div>
                             </section>
                         </div>
@@ -431,14 +449,14 @@
                                 <span class="section-kicker">Quick Sign-In</span>
                                 <h2>Sign in with your phone</h2>
                                 <p class="section-copy">
-                                    Scan the QR code to connect this TV shell without typing your Nuvio credentials on the remote.
+                                    Scan the QR code to connect this browser session without typing your Nuvio credentials manually.
                                 </p>
 
                                 <div class="qr-login-frame">
                                     <img
                                         id="qrLoginImage"
                                         class="qr-login-image"
-                                        alt="QR code for TV sign in"
+                                        alt="QR code for web sign in"
                                         src=""
                                     />
                                 </div>

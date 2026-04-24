@@ -1,35 +1,26 @@
-# NuvioTizen
+# Nuvio Web PC
 
-`NuvioTizen` is a Samsung Tizen TV web app prototype for a Nuvio-branded streaming shell. It is a single-page TV interface built with plain HTML, CSS, and JavaScript and packaged as a Tizen widget (`.wgt`).
+`Nuvio Web PC` is a browser-first desktop version of the Nuvio streaming shell. It keeps the single-page HTML/CSS/JavaScript app structure from the original TV prototype, but the runtime is now aimed at a normal desktop browser with mouse, keyboard typing, and browser fullscreen support.
 
-The app includes:
+## What Changed
 
-- Nuvio account login with direct credentials and QR-based TV pairing
-- Home spotlight rotation and browse rails
-- Movie and series catalog browsing
-- Search with an on-screen keyboard
-- Detail, season, episode, and source selection flows
-- Playback controls with audio and subtitle switching
-- Tizen packaging through `config.xml`
+- Desktop navigation with mouse, tab focus, and keyboard shortcuts
+- Search input for real desktop keyboard typing
+- Browser-friendly player behavior with fullscreen support and pointer-driven controls
+- Responsive layout adjustments for laptop and desktop screens
+- Tizen-only runtime script dependency removed from the page entrypoint
 
 ## Project Layout
 
 - [`index.html`](index.html): app shell and all view markup
-- [`css/style.css`](css/style.css): TV layout, navigation, player, login, and spotlight styling
-- [`js/main.js`](js/main.js): application state, navigation, auth, catalogs, playback, subtitles, and TV input handling
-- [`config.xml`](config.xml): Tizen widget manifest and privileges
-- [`images/`](images): logos and app icons
-- [`NuvioTizen.wgt`](NuvioTizen.wgt): packaged widget artifact when built
+- [`css/style.css`](css/style.css): layout, navigation, player, login, and browse styling
+- [`js/main.js`](js/main.js): state, navigation, auth, catalogs, playback, subtitles, and desktop input handling
+- [`images/`](images): logos and app assets
+- [`config.xml`](config.xml): leftover Tizen manifest from the original branch history, not required for desktop browser runtime
 
-## Requirements
+## Run
 
-- Samsung Tizen Studio installed
-- A valid Samsung certificate profile for packaging
-- Network access from the TV or emulator
-
-This repo does not use a Node build system. The runtime app is plain static web assets, and packaging is handled by Tizen Studio.
-
-## Build
+This repo has no Node build step. Serve it as static files from any local web server.
 
 Syntax check:
 
@@ -37,35 +28,22 @@ Syntax check:
 node --check js/main.js
 ```
 
-Build the web app:
+Example local server:
 
 ```sh
-"/Users/user/tizen-studio/tools/ide/bin/tizen" build-web -- "$(pwd)"
+python -m http.server 8080
 ```
 
-Package the widget:
+Then open `http://localhost:8080`.
 
-replace cert in the following command with your certificate
+## Desktop Controls
 
-```sh
-"/Users/user/tizen-studio/tools/ide/bin/tizen" package -t wgt -s cert -- ./.buildResult
-```
+- Mouse: click navigation, cards, streams, and player controls
+- Keyboard: arrow keys still move through the remote-style focus model when needed
+- Search: type directly into the search field
+- Player: `Space` toggles play/pause, `F` toggles fullscreen, `Esc`/`Backspace` goes back when not typing in a field
 
-Copy the packaged widget to the repo root:
+## Notes
 
-```sh
-cp ./.buildResult/*.wgt ./
-```
-
-## Runtime Notes
-
-- The app is configured as a Tizen TV widget in [`config.xml`](config.xml).
-- Main remote-navigation behavior is implemented in [`js/main.js`](js/main.js).
-- Spotlight, browse rails, login, and player UI are styled in [`css/style.css`](css/style.css).
-- The app currently uses Supabase and Nuvio endpoints configured directly in [`js/main.js`](js/main.js).
-
-## Current Output
-
-The packaged build artifact is expected at:
-
-- [`NuvioTizen.wgt`](NuvioTizen.wgt)
+- Playback uses standard browser video by default on this branch.
+- QR sign-in and addon/catalog fetching still use the existing Nuvio and Supabase endpoints configured in [`js/main.js`](js/main.js).
