@@ -9,6 +9,7 @@ var STORAGE_REFRESH = 'nuvio.refreshToken';
 var STORAGE_USER = 'nuvio.user';
 var STORAGE_CONTINUE = 'nuviowebpc.continueWatching';
 var LEGACY_STORAGE_CONTINUE = 'nuviotizen.continueWatching';
+var STORAGE_WATCHED = 'nuviowebpc.watchedVideos';
 var APP_DEVICE_NAME = 'Nuvio Web PC';
 var FALLBACK_MOVIE_GENRES = ['Top', 'Action', 'Comedy', 'Drama', 'Sci-Fi', 'Thriller', 'Animation', 'Documentary'];
 var FALLBACK_SERIES_GENRES = ['Top', 'Drama', 'Comedy', 'Crime', 'Sci-Fi', 'Animation', 'Thriller', 'Documentary'];
@@ -65,6 +66,7 @@ var state = {
     ownerId: null,
     addons: [],
     continueWatching: [],
+    watchedVideos: {},
     movies: [],
     series: [],
     movieGenres: [],
@@ -485,6 +487,8 @@ function saveContinueWatching() {
 
 function restoreContinueWatching() {
     var payload = safeJsonParse(localStorage.getItem(STORAGE_CONTINUE));
+    var normalized = [];
+    var seen = {};
 
     if (!Array.isArray(payload)) {
         payload = safeJsonParse(localStorage.getItem(LEGACY_STORAGE_CONTINUE));
@@ -495,9 +499,56 @@ function restoreContinueWatching() {
         return;
     }
 
-    state.continueWatching = payload.filter(function(entry) {
-        return entry && entry.item && entry.kind && entry.item.id;
-    }).slice(0, 12);
+    payload.forEach(function(entry) {
+        var key;
+
+        if (!entry || !entry.item || !entry.kind || !entry.item.id) {
+            return;
+        }
+
+        key = entry.kind + ':' + entry.item.id;
+        if (seen[key]) {
+            return;
+        }
+
+        seen[key] = true;
+        normalized.push(entry);
+    });
+
+    state.continueWatching = normalized.slice(0, 12);
+}
+
+function getWatchedVideoKey(item, video) {
+    if (!item || !item.id || !video || !video.id) {
+        return '';
+    }
+    return item.id + ':' + video.id;
+}
+
+function saveWatchedVideos() {
+    localStorage.setItem(STORAGE_WATCHED, JSON.stringify(state.watchedVideos || {}));
+}
+
+function restoreWatchedVideos() {
+    var payload = safeJsonParse(localStorage.getItem(STORAGE_WATCHED));
+    state.watchedVideos = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {};
+}
+
+function markVideoWatched(item, video) {
+    var key = getWatchedVideoKey(item, video);
+
+    if (!key) {
+        return;
+    }
+
+    state.watchedVideos[key] = {
+        watchedAt: new Date().toISOString()
+    };
+    saveWatchedVideos();
+}
+
+function isVideoWatched(video) {
+    return !!(state.watchedVideos && state.watchedVideos[getWatchedVideoKey(state.selectedItem, video)]);
 }
 
 function trackContinueWatching(item, kind, video) {
@@ -518,10 +569,10 @@ function trackContinueWatching(item, kind, video) {
             episode: getVideoEpisode(video)
         } : null
     };
-    key = snapshot.kind + ':' + snapshot.item.id + ':' + (snapshot.video && snapshot.video.id ? snapshot.video.id : '');
+    key = snapshot.kind + ':' + snapshot.item.id;
 
     state.continueWatching = [snapshot].concat(state.continueWatching.filter(function(entry) {
-        var entryKey = entry.kind + ':' + entry.item.id + ':' + (entry.video && entry.video.id ? entry.video.id : '');
+        var entryKey = entry.kind + ':' + entry.item.id;
         return entryKey !== key;
     })).slice(0, 12);
 
@@ -1070,6 +1121,85 @@ function cycleSubtitleTrack() {
     selectSubtitleTrack(tracks[nextIndex].id);
 }
 
+function getSortedSeriesVideos() {
+    return (state.allSeriesVideos || []).slice().sort(function(left, right) {
+        var seasonDelta = getVideoSeason(left) - getVideoSeason(right);
+
+        if (seasonDelta) {
+            return seasonDelta;
+        }
+
+        return getVideoEpisode(left) - getVideoEpisode(right);
+    });
+}
+
+function getNextEpisode() {
+    var videos = getSortedSeriesVideos();
+    var currentId = state.selectedVideo && state.selectedVideo.id;
+    var currentIndex;
+
+    if (state.selectedType !== 'series' || !currentId || !videos.length) {
+        return null;
+    }
+
+    currentIndex = videos.findIndex(function(video) {
+        return video.id === currentId;
+    });
+
+    if (currentIndex === -1 || currentIndex >= videos.length - 1) {
+        return null;
+    }
+
+    return videos[currentIndex + 1];
+}
+
+function setPlayerNextEpisodeUi() {
+    var button = byId('playerNextEpisodeButton');
+    var nextEpisode = getNextEpisode();
+
+    if (!button) {
+        return;
+    }
+
+    button.disabled = !nextEpisode;
+    button.classList.toggle('is-disabled', !nextEpisode);
+    button.setAttribute('aria-label', nextEpisode ? 'Play next episode' : 'No next episode');
+    button.setAttribute('title', nextEpisode ? 'Play next episode' : 'No next episode');
+}
+
+function getPreferredPlayableStream() {
+    var playable = state.streams.filter(function(entry) {
+        return entry.playable && entry.raw && entry.raw.url;
+    });
+    var browserSafe = playable.filter(function(entry) {
+        return !entry.audioWarning;
+    })[0];
+
+    return browserSafe || playable[0] || null;
+}
+
+function playNextEpisode() {
+    var nextEpisode = getNextEpisode();
+
+    if (!nextEpisode || !state.selectedItem) {
+        setPlayerStatus('No next episode');
+        setPlayerNextEpisodeUi();
+        return;
+    }
+
+    stopCurrentPlayback();
+    state.selectedSeason = getVideoSeason(nextEpisode);
+    state.selectedVideo = nextEpisode;
+    updateSelectedEpisodesForSeason();
+    state.streams = [];
+    state.currentStream = null;
+    state.autoplayPending = true;
+    renderAddons();
+    renderPlayerState();
+    setPlayerStatus('Loading next episode');
+    loadStreamsForSelection();
+}
+
 function setPlayerToggleUi(isPlaying) {
     var button = byId('playerToggleButton');
     byId('playerToggleGlyph').textContent = isPlaying ? '❚❚' : '▶';
@@ -1083,6 +1213,9 @@ function setPlayerFullscreenUi() {
     byId('playerFullscreenGlyph').textContent = state.playerFullscreen ? '❐' : '⛶';
     button.setAttribute('aria-label', state.playerFullscreen ? 'Windowed' : 'Fullscreen');
     button.setAttribute('title', state.playerFullscreen ? 'Windowed' : 'Fullscreen');
+    byId('playerFullscreenGlyph').textContent = '\u26F6';
+    button.setAttribute('aria-label', state.playerFullscreen ? 'Exit fullscreen' : 'Fullscreen');
+    button.setAttribute('title', state.playerFullscreen ? 'Exit fullscreen' : 'Fullscreen');
 }
 
 function updateTrackBadges() {
@@ -2097,9 +2230,6 @@ function getMainRowContainers() {
             queryAll('#streamList .stream-card').forEach(function() {
                 addonContainers.push(streamSection);
             });
-            if (detailHeroRow) {
-                addonContainers.push(detailHeroRow);
-            }
             return addonContainers.filter(Boolean);
         }
 
@@ -2252,10 +2382,6 @@ function getMainRows() {
                 addonRows.push([streamButton]);
             });
 
-            if (detailActions.length) {
-                addonRows.push(detailActions);
-            }
-
             return addonRows;
         }
 
@@ -2273,7 +2399,9 @@ function getMainRows() {
     if (state.currentView === 'player') {
         var playerRows = [];
         var progressButton = byId('playerProgressButton');
-        var playerActions = queryAll('#playerActions .action-button');
+        var playerActions = queryAll('#playerActions .action-button').filter(function(button) {
+            return !button.disabled;
+        });
         var audioButtons = queryAll('#audioTrackList .track-chip');
         var subtitleButtons = queryAll('#subtitleTrackList .track-chip');
 
@@ -2313,6 +2441,7 @@ function buildContinueEntries() {
         return {
             item: entry.item,
             kind: entry.kind,
+            video: entry.video,
             metaText: entry.kind === 'series' && entry.video
                 ? 'Resume • Season ' + entry.video.season + ' • Episode ' + entry.video.episode
                 : 'Resume watching'
@@ -2364,6 +2493,90 @@ function getHomeRailDescriptorForMainRow(rowIndex) {
     railRowIndex = rowIndex - (state.continueWatching.length ? 2 : 1);
 
     return descriptors[railRowIndex] || null;
+}
+
+function getHomeRailDescriptorByKey(key) {
+    return getHomeRailDescriptors().filter(function(descriptor) {
+        return descriptor.key === key;
+    })[0] || null;
+}
+
+function getMainPositionForElement(element) {
+    var rows = getMainRows();
+    var rowIndex;
+    var colIndex;
+
+    for (rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
+        colIndex = rows[rowIndex].indexOf(element);
+        if (colIndex !== -1) {
+            return {
+                row: rowIndex,
+                col: colIndex
+            };
+        }
+    }
+
+    return null;
+}
+
+function activatePointerMainElement(element) {
+    var position = getMainPositionForElement(element);
+
+    if (!position) {
+        return false;
+    }
+
+    state.focusRegion = 'main';
+    state.mainRow = position.row;
+    state.mainCol = position.col;
+    updateRowEmphasis();
+
+    if (state.currentView === 'player' && state.playerFullscreen) {
+        showPlayerChrome(position.row > 0);
+    }
+
+    return true;
+}
+
+function activatePointerNavElement(element) {
+    var navItems = queryAll('.nav-item');
+    var index = navItems.indexOf(element);
+
+    if (index === -1) {
+        return false;
+    }
+
+    state.focusRegion = 'nav';
+    state.navIndex = index;
+    updateRowEmphasis();
+    return true;
+}
+
+function activateHomeRailHover(card) {
+    var key = card.getAttribute('data-home-rail-key');
+    var entryIndex = parseInt(card.getAttribute('data-home-entry-index'), 10);
+    var descriptor;
+    var previousIndex;
+    var direction;
+
+    if (!key || isNaN(entryIndex)) {
+        return false;
+    }
+
+    descriptor = getHomeRailDescriptorByKey(key);
+    if (!descriptor || !descriptor.entries.length) {
+        return false;
+    }
+
+    previousIndex = state.homeRailIndices[key] || 0;
+    if (previousIndex !== entryIndex) {
+        direction = entryIndex > previousIndex ? 'right' : 'left';
+        state.homeRailIndices[key] = entryIndex;
+        renderSingleHomeRail(descriptor, direction);
+    }
+
+    activatePointerMainElement((byId(descriptor.containerId) && byId(descriptor.containerId).querySelector('.card.is-home-active')) || card);
+    return true;
 }
 
 function getSearchPaneInfo() {
@@ -4665,6 +4878,29 @@ function refreshSubtitleAddonsForCurrentStream() {
     });
 }
 
+function getDesktopAudioWarning(stream) {
+    var text = [
+        stream && stream.name,
+        stream && stream.title,
+        stream && stream.description,
+        stream && stream.filename
+    ].filter(Boolean).join(' ').toLowerCase();
+
+    if (!text) {
+        return '';
+    }
+
+    if (/\b(e-?ac-?3|ddp|dd\+|dolby digital plus|ac-?3|dts|dts-hd|truehd|atmos)\b/.test(text)) {
+        return 'Audio codec may not work in desktop browsers';
+    }
+
+    if (/\b(aac|opus|vorbis|mp3)\b/.test(text)) {
+        return '';
+    }
+
+    return '';
+}
+
 function fetchStreamsFromAddon(addon, type, videoId) {
     var baseUrl = addonBaseUrl(addon.transportUrl);
     var addonName = addon.manifest && addon.manifest.name ? addon.manifest.name : 'Addon';
@@ -4700,10 +4936,14 @@ function fetchStreamsFromAddon(addon, type, videoId) {
                 var description = stream.description || stream.title || '';
                 var playable = !!stream.url;
                 var status = playable ? 'Playable' : 'Needs proxy';
+                var audioWarning = getDesktopAudioWarning(stream);
 
                 if (stream.behaviorHints && stream.behaviorHints.notWebReady) {
                     playable = false;
                     status = 'Not web ready';
+                }
+                if (playable && audioWarning) {
+                    status = 'Audio risk';
                 }
 
                 return {
@@ -4713,6 +4953,7 @@ function fetchStreamsFromAddon(addon, type, videoId) {
                     status: status,
                     title: title,
                     description: description,
+                    audioWarning: playable ? audioWarning : '',
                     raw: stream
                 };
             });
@@ -4787,12 +5028,16 @@ function renderEpisodeRail() {
         var copy = document.createElement('div');
         var title = document.createElement('div');
         var meta = document.createElement('div');
+        var watched = document.createElement('div');
 
         button.className = 'episode-list-button';
         button.type = 'button';
         button.setAttribute('tabindex', getInteractiveTabIndex());
         if (state.selectedVideo && state.selectedVideo.id === video.id) {
             button.classList.add('is-selected');
+        }
+        if (isVideoWatched(video)) {
+            button.classList.add('is-watched');
         }
 
         index.className = 'episode-list-index';
@@ -4801,12 +5046,15 @@ function renderEpisodeRail() {
         copy.className = 'episode-list-copy';
         title.className = 'episode-list-title';
         meta.className = 'episode-list-meta';
+        watched.className = 'episode-list-watched';
 
         title.textContent = getEpisodeTitle(video);
         meta.textContent = formatEpisodeMeta(video);
+        watched.textContent = 'Watched';
 
         copy.appendChild(title);
         copy.appendChild(meta);
+        copy.appendChild(watched);
         button.appendChild(index);
         button.appendChild(copy);
 
@@ -4930,11 +5178,14 @@ function renderStreams() {
 
         title.textContent = streamEntry.title;
         addon.textContent = streamEntry.addonName;
-        note.textContent = streamEntry.description || 'No extra stream description.';
+        note.textContent = streamEntry.audioWarning || streamEntry.description || 'No extra stream description.';
         badge.textContent = streamEntry.status;
 
         if (!streamEntry.playable) {
             badge.classList.add('is-error');
+        } else if (streamEntry.audioWarning) {
+            badge.classList.add('is-warning');
+            button.title = streamEntry.audioWarning;
         }
 
         body.appendChild(title);
@@ -4959,18 +5210,17 @@ function syncAddonsLayoutOrder() {
     }
 
     if (state.selectedType === 'series') {
+        detailHeroRow.style.display = 'none';
         if (view.firstElementChild !== episodeSection) {
             view.insertBefore(episodeSection, detailHeroRow);
         }
         if (episodeBrowser && streamSection.parentNode !== episodeBrowser) {
             episodeBrowser.appendChild(streamSection);
         }
-        if (episodeSection.nextElementSibling !== detailHeroRow) {
-            view.appendChild(detailHeroRow);
-        }
         return;
     }
 
+    detailHeroRow.style.display = '';
     if (streamSection.parentNode !== view) {
         view.insertBefore(streamSection, episodeSection);
     }
@@ -5047,6 +5297,7 @@ function renderPlayerState() {
             'This player page is for direct stream URLs. Some addon entries may still require a proxy or native playback layer.';
         clearPlaybackSurface();
         renderTrackSelectors();
+        setPlayerNextEpisodeUi();
         return;
     }
 
@@ -5054,7 +5305,9 @@ function renderPlayerState() {
     byId('playerAddon').textContent = stream.addonName;
     byId('playerSource').textContent = stream.raw && stream.raw.url ? stream.raw.url : stream.status;
     byId('playerDescription').textContent =
-        stream.description || 'This stream came from the selected addon source.';
+        stream.audioWarning
+            ? stream.audioWarning + '. Pick an AAC/MP4 source or use a native/transcoded player for this file.'
+            : (stream.description || 'This stream came from the selected addon source.');
     syncExternalSubtitleTracks();
 
     if (!stream.playable || !stream.raw || !stream.raw.url) {
@@ -5063,12 +5316,14 @@ function renderPlayerState() {
         clearPlaybackSurface();
         setPlayerStatus(stream.status);
         renderTrackSelectors();
+        setPlayerNextEpisodeUi();
         return;
     }
 
     empty.classList.add('is-hidden');
     video.classList.remove('is-hidden');
     renderTrackSelectors();
+    setPlayerNextEpisodeUi();
 }
 
 function startHtml5Stream(url) {
@@ -5085,12 +5340,16 @@ function startHtml5Stream(url) {
         video.load();
     }
 
-    setPlayerStatus('Loading (HTML5)');
+    setPlayerStatus(state.currentStream && state.currentStream.audioWarning
+        ? 'Loading (HTML5, audio may be unsupported)'
+        : 'Loading (HTML5)');
     resetPlaybackMetrics();
     playPromise = video.play();
     if (playPromise && typeof playPromise.then === 'function') {
         playPromise.then(function() {
-            setPlayerStatus('Playing (HTML5)');
+            setPlayerStatus(state.currentStream && state.currentStream.audioWarning
+                ? 'Playing (HTML5, audio may be unsupported)'
+                : 'Playing (HTML5)');
             setPlayerToggleUi(true);
             readHtml5Metrics();
             startPlaybackTicker();
@@ -5239,6 +5498,10 @@ function loadCurrentStream() {
 function openStream(streamEntry) {
     resetTrackState();
     state.currentStream = streamEntry;
+    if (state.selectedType === 'series' && state.selectedVideo) {
+        markVideoWatched(state.selectedItem, state.selectedVideo);
+        renderEpisodeRail();
+    }
     trackContinueWatching(state.selectedItem, state.selectedType, state.selectedVideo);
     renderContinueWatching();
     renderPlayerState();
@@ -5548,7 +5811,9 @@ function createCard(item, kind) {
     card.appendChild(synopsis);
 
     card.addEventListener('click', function() {
-        prepareSelection(item, kind);
+        prepareSelection(item, kind, options.video && options.video.id ? {
+            resumeVideoId: options.video.id
+        } : null);
     });
 
     return card;
@@ -5594,6 +5859,7 @@ function renderHomeRailWindow(containerId, entries, key, direction) {
     visible = getCenteredHomeWindow(entries, index, visibleCount);
 
     visible.forEach(function(entry, visibleIndex) {
+        var entryIndex = ((index - centerIndex + visibleIndex) % entries.length + entries.length) % entries.length;
         var card = createCard(entry.item, entry.kind, {
             className: visibleIndex === centerIndex ? 'is-home-active' : 'is-home-compact',
             metaText: entry.metaText,
@@ -5601,6 +5867,8 @@ function renderHomeRailWindow(containerId, entries, key, direction) {
             homeFeatureLayout: visibleIndex === centerIndex
         });
 
+        card.setAttribute('data-home-rail-key', key);
+        card.setAttribute('data-home-entry-index', String(entryIndex));
         card.style.setProperty('--rail-order', String(visibleIndex));
         card.style.setProperty('--rail-distance', String(Math.abs(visibleIndex - centerIndex)));
         card.style.setProperty('--rail-offset', String(visibleIndex - centerIndex));
@@ -5656,7 +5924,8 @@ function renderContinueWatching() {
     entries.slice(0, 8).forEach(function(entry) {
         container.appendChild(createCard(entry.item, entry.kind, {
             className: 'is-continue-card',
-            metaText: entry.metaText
+            metaText: entry.metaText,
+            video: entry.video
         }));
     });
 
@@ -5723,13 +5992,20 @@ function prepareSelection(item, type, options) {
             .then(function(payload) {
                 var meta = payload && payload.meta ? payload.meta : payload;
                 var seasons;
+                var resumeVideo;
                 state.selectedItem = meta || item;
                 state.allSeriesVideos = meta && Array.isArray(meta.videos) ? meta.videos.slice() : [];
                 seasons = uniqueList(state.allSeriesVideos.map(getVideoSeason)).sort(function(left, right) {
                     return left - right;
                 });
                 state.availableSeasons = seasons;
-                state.selectedSeason = seasons.length ? seasons[0] : null;
+                resumeVideo = options && options.resumeVideoId
+                    ? state.allSeriesVideos.filter(function(video) {
+                        return video.id === options.resumeVideoId;
+                    })[0]
+                    : null;
+                state.selectedSeason = resumeVideo ? getVideoSeason(resumeVideo) : (seasons.length ? seasons[0] : null);
+                state.selectedVideo = resumeVideo || null;
                 updateSelectedEpisodesForSeason();
                 renderAddons();
                 if (!state.selectedVideo) {
@@ -5793,9 +6069,7 @@ function loadStreamsForSelection() {
             setAddonsMessage('Loaded ' + state.streams.length + ' stream entries.', 'success');
             if (state.autoplayPending) {
                 state.autoplayPending = false;
-                var playable = state.streams.filter(function(entry) {
-                    return entry.playable && entry.raw && entry.raw.url;
-                })[0];
+                var playable = getPreferredPlayableStream();
                 if (playable) {
                     openStream(playable);
                     return;
@@ -5818,6 +6092,50 @@ function bindNav() {
             });
             setTimeout(focusCurrent, 0);
         });
+    });
+}
+
+function bindPointerHover() {
+    var hoverSelector = [
+        '.nav-item',
+        '.action-button',
+        '.genre-chip',
+        '.card',
+        '.search-suggestion',
+        '.stream-card',
+        '.episode-list-button',
+        '.track-chip',
+        '.player-progress-button',
+        '.video-frame',
+        '#seasonSelect',
+        '#searchTextInput'
+    ].join(',');
+
+    document.addEventListener('pointerover', function(event) {
+        var target;
+
+        if (event.pointerType && event.pointerType !== 'mouse' && event.pointerType !== 'pen') {
+            return;
+        }
+
+        target = event.target && event.target.closest ? event.target.closest(hoverSelector) : null;
+        if (!target) {
+            return;
+        }
+
+        setInputMode('pointer');
+
+        if (target.classList && target.classList.contains('nav-item')) {
+            activatePointerNavElement(target);
+            return;
+        }
+
+        if (target.classList && target.classList.contains('card') && target.hasAttribute('data-home-rail-key')) {
+            activateHomeRailHover(target);
+            return;
+        }
+
+        activatePointerMainElement(target);
     });
 }
 
@@ -5866,9 +6184,7 @@ function focusAddonsRow(selector) {
 
 function bindDetailActions() {
     byId('detailPlayButton').addEventListener('click', function() {
-        var playable = state.streams.filter(function(entry) {
-            return entry.playable && entry.raw && entry.raw.url;
-        })[0];
+        var playable = getPreferredPlayableStream();
 
         if (playable) {
             openStream(playable);
@@ -5982,6 +6298,7 @@ function bindPlayer() {
     var controller = byId('playerControllerChrome');
     var seekBackGlyph = byId('playerSeekBackButton');
     var seekForwardGlyph = byId('playerSeekForwardButton');
+    var nextEpisodeGlyph = byId('playerNextEpisodeButton');
     var audioGlyph = byId('playerAudioButton');
     var reloadGlyph = byId('playerReloadButton');
 
@@ -5994,6 +6311,9 @@ function bindPlayer() {
     }
     if (seekForwardGlyph && seekForwardGlyph.firstElementChild) {
         seekForwardGlyph.firstElementChild.innerHTML = '&#8631;';
+    }
+    if (nextEpisodeGlyph && nextEpisodeGlyph.firstElementChild) {
+        nextEpisodeGlyph.firstElementChild.innerHTML = '&#9197;';
     }
     if (audioGlyph && audioGlyph.firstElementChild) {
         audioGlyph.firstElementChild.innerHTML = '&#9835;';
@@ -6012,6 +6332,10 @@ function bindPlayer() {
 
     byId('playerSeekForwardButton').addEventListener('click', function() {
         seekCurrentPlayback(30000);
+    });
+
+    byId('playerNextEpisodeButton').addEventListener('click', function() {
+        playNextEpisode();
     });
 
     byId('playerProgressButton').addEventListener('click', function() {
@@ -6061,7 +6385,9 @@ function bindPlayer() {
     video.addEventListener('durationchange', readHtml5Metrics);
     video.addEventListener('playing', function() {
         setPlayerToggleUi(true);
-        setPlayerStatus('Playing');
+        setPlayerStatus(state.currentStream && state.currentStream.audioWarning
+            ? 'Playing (HTML5, audio may be unsupported)'
+            : 'Playing');
         startPlaybackTicker();
         refreshPlaybackTracks();
     });
@@ -6390,6 +6716,7 @@ function init() {
     });
 
     bindNav();
+    bindPointerHover();
     bindHomeActions();
     bindDetailActions();
     bindSearch();
@@ -6399,6 +6726,7 @@ function init() {
 
     restoreStoredSession();
     restoreContinueWatching();
+    restoreWatchedVideos();
     updateUserPanel();
     updateNavState();
     updateViewState();
