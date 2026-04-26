@@ -6,6 +6,7 @@
     <meta name="description" content="Nuvio web shell with live catalogs, addons, and desktop playback" />
     <title>Nuvio Web</title>
     <link rel="stylesheet" type="text/css" href="css/style.css" />
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.20/dist/hls.min.js"></script>
     <script defer src="js/main.js"></script>
 </head>
 <body data-current-view="home">
@@ -329,29 +330,26 @@
                                         <div class="player-progress-caption" id="playerProgressCaption">Idle</div>
                                         <div class="action-row player-actions" id="playerActions">
                                             <button class="action-button player-icon-button" id="playerSeekBackButton" type="button" aria-label="Back 30 seconds" title="Back 30 seconds">
-                                                <span class="player-action-glyph">↶</span>
+                                                <span class="player-action-glyph">&#8630;</span>
                                                 <span class="player-action-badge">30</span>
                                             </button>
                                             <button class="action-button player-icon-button" id="playerToggleButton" type="button" aria-label="Play" title="Play">
                                                 <span class="player-action-glyph" id="playerToggleGlyph">▶</span>
                                             </button>
                                             <button class="action-button player-icon-button" id="playerSeekForwardButton" type="button" aria-label="Forward 30 seconds" title="Forward 30 seconds">
-                                                <span class="player-action-glyph">↷</span>
+                                                <span class="player-action-glyph">&#8631;</span>
                                                 <span class="player-action-badge">30</span>
                                             </button>
                                             <button class="action-button player-icon-button" id="playerNextEpisodeButton" type="button" aria-label="Play next episode" title="Play next episode">
                                                 <span class="player-action-glyph">&#9197;</span>
                                             </button>
                                             <button class="action-button player-icon-button" id="playerAudioButton" type="button" aria-label="Cycle audio track" title="Cycle audio track">
-                                                <span class="player-action-glyph">♫</span>
+                                                <span class="player-action-glyph">&#9835;</span>
                                                 <span class="player-action-badge" id="playerAudioBadge">1</span>
                                             </button>
                                             <button class="action-button player-icon-button" id="playerSubtitleButton" type="button" aria-label="Cycle subtitles" title="Cycle subtitles">
                                                 <span class="player-action-glyph">CC</span>
                                                 <span class="player-action-badge" id="playerSubtitleBadge">Off</span>
-                                            </button>
-                                            <button class="action-button player-icon-button" id="playerReloadButton" type="button" aria-label="Reload stream" title="Reload stream">
-                                                <span class="player-action-glyph">↻</span>
                                             </button>
                                             <button class="action-button player-icon-button" id="playerFullscreenButton" type="button" aria-label="Fullscreen" title="Fullscreen">
                                                 <span class="player-action-glyph" id="playerFullscreenGlyph">⛶</span>

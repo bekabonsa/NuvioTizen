@@ -1594,6 +1594,10 @@ body.is-player-fullscreen.is-player-chrome-visible .player-controller-card {
     border: 0;
     background: transparent;
     border-radius: 999px;
+    cursor: pointer;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
 }
 
 .player-time-value {
@@ -1610,6 +1614,12 @@ body.is-player-fullscreen.is-player-chrome-visible .player-controller-card {
     border-radius: 999px;
     overflow: hidden;
     background: rgba(255, 255, 255, 0.14);
+    transform-origin: center;
+    transition: transform 120ms ease;
+}
+
+.player-progress-button:active .player-progress-rail {
+    transform: scaleY(1.35);
 }
 
 .player-progress-fill {

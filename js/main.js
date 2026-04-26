@@ -10,6 +10,7 @@ var STORAGE_USER = 'nuvio.user';
 var STORAGE_CONTINUE = 'nuviowebpc.continueWatching';
 var LEGACY_STORAGE_CONTINUE = 'nuviotizen.continueWatching';
 var STORAGE_WATCHED = 'nuviowebpc.watchedVideos';
+var STORAGE_STREAMING_SERVER = 'nuviowebpc.streamingServerUrl';
 var APP_DEVICE_NAME = 'Nuvio Web PC';
 var FALLBACK_MOVIE_GENRES = ['Top', 'Action', 'Comedy', 'Drama', 'Sci-Fi', 'Thriller', 'Animation', 'Documentary'];
 var FALLBACK_SERIES_GENRES = ['Top', 'Drama', 'Comedy', 'Crime', 'Sci-Fi', 'Animation', 'Thriller', 'Documentary'];
@@ -19,8 +20,11 @@ var FEATURED_FADE_MS = 180;
 var HOME_CATALOG_LIMIT = 120;
 var HOME_CATALOG_PAGE_SIZE = 24;
 var HOME_RAIL_VISIBLE_DEFAULT = 7;
+var HOME_RAIL_HOVER_COOLDOWN_MS = 650;
+var HOME_RAIL_AUTO_ROTATE_MS = 6500;
 var PLAYER_SCRUB_INITIAL_NUDGE_MS = 5000;
 var PLAYER_SCRUB_TICK_MS = 50;
+var DEFAULT_STREAMING_SERVER_URL = 'http://127.0.0.1:11470';
 var VIEW_META = {
     home: {
         eyebrow: 'Discover',
@@ -113,6 +117,9 @@ var state = {
     seekPreviewStartedAt: 0,
     seekPreviewLastTickAt: 0,
     seekPreviewTimer: null,
+    progressDragActive: false,
+    hlsPlayer: null,
+    html5FallbackUrl: '',
     playerMode: 'html5',
     playerFullscreen: false,
     inputMode: 'pointer',
@@ -132,6 +139,11 @@ var state = {
     featuredRenderedKey: null,
     featuredTransitionToken: 0,
     featuredTransitionTimer: null,
+    homeRailAutoTimer: null,
+    homeRailHoverLockUntil: 0,
+    homeRailHoverX: null,
+    homeRailHoverY: null,
+    homeRailPointerActiveUntil: 0,
     autoplayPending: false,
     qrAuthAccessToken: null,
     qrAuthRefreshToken: null,
@@ -1296,6 +1308,11 @@ function updateProgressUi() {
     byId('playerDuration').textContent = formatPlaybackTime(state.durationMs);
     byId('playerProgressFill').style.width = String(percent) + '%';
     if (state.seekPreviewActive) {
+        if (!state.seekPreviewDirection) {
+            byId('playerProgressCaption').textContent =
+                'Seek to ' + formatPlaybackTime(displayTime) + ' • release to jump';
+            return;
+        }
         byId('playerProgressCaption').textContent =
             'Scrub to ' + formatPlaybackTime(displayTime) +
             ' • ' + String(getSeekPreviewSpeedMultiplier(Date.now() - state.seekPreviewStartedAt)) + 'x' +
@@ -1465,6 +1482,68 @@ function stopSeekPreview(commit) {
     seekPlaybackTo(target, 'Skipped to ');
 }
 
+function getProgressPointerTargetMs(event) {
+    var progressButton = byId('playerProgressButton');
+    var rect;
+    var ratio;
+
+    if (!progressButton || !state.durationMs) {
+        return 0;
+    }
+
+    rect = progressButton.getBoundingClientRect();
+    if (!rect.width) {
+        return state.currentTimeMs || 0;
+    }
+
+    ratio = (event.clientX - rect.left) / rect.width;
+    ratio = Math.max(0, Math.min(1, ratio));
+    return ratio * state.durationMs;
+}
+
+function updateProgressPointerPreview(event) {
+    if (!state.durationMs) {
+        setPlayerStatus('Stream timing unavailable');
+        return;
+    }
+
+    state.seekPreviewActive = true;
+    state.seekPreviewTargetMs = clampSeekPreviewTarget(getProgressPointerTargetMs(event));
+    state.seekPreviewStartedAt = Date.now();
+    state.seekPreviewDirection = 0;
+    showPlayerChrome(true);
+    updateProgressUi();
+}
+
+function beginProgressPointerSeek(event) {
+    var progressButton = byId('playerProgressButton');
+
+    if (!state.durationMs) {
+        setPlayerStatus('Stream timing unavailable');
+        return;
+    }
+
+    state.progressDragActive = true;
+    clearSeekPreviewTimer();
+    updateProgressPointerPreview(event);
+    if (progressButton && progressButton.setPointerCapture && event.pointerId !== undefined) {
+        try {
+            progressButton.setPointerCapture(event.pointerId);
+        } catch (error) {
+            // no-op
+        }
+    }
+}
+
+function finishProgressPointerSeek(commit) {
+    if (!state.progressDragActive) {
+        return;
+    }
+
+    state.progressDragActive = false;
+    stopSeekPreview(commit);
+}
+
 function tickSeekPreview() {
     var now;
     var elapsedMs;
@@ -1530,9 +1609,74 @@ function hasAvplay() {
     return typeof webapis !== 'undefined' && webapis && webapis.avplay;
 }
 
+function destroyHlsPlayer() {
+    if (!state.hlsPlayer) {
+        return;
+    }
+
+    try {
+        state.hlsPlayer.destroy();
+    } catch (error) {
+        // no-op
+    }
+    state.hlsPlayer = null;
+}
+
+function getStreamingServerUrl() {
+    var params;
+    var fromQuery = '';
+    var stored = '';
+
+    try {
+        params = new URLSearchParams(window.location.search || '');
+        fromQuery = params.get('streamingServer') || '';
+    } catch (error1) {
+        fromQuery = '';
+    }
+
+    if (fromQuery) {
+        localStorage.setItem(STORAGE_STREAMING_SERVER, fromQuery);
+        return fromQuery.replace(/\/+$/, '');
+    }
+
+    try {
+        stored = localStorage.getItem(STORAGE_STREAMING_SERVER) || '';
+    } catch (error2) {
+        stored = '';
+    }
+
+    return (stored || DEFAULT_STREAMING_SERVER_URL).replace(/\/+$/, '');
+}
+
+function buildStreamingServerHlsUrl(url, streamEntry) {
+    var raw = streamEntry && streamEntry.raw ? streamEntry.raw : {};
+    var serverUrl = getStreamingServerUrl();
+    var filename = raw.filename || deriveFilenameFromUrl(url) || 'stream.mkv';
+
+    if (!serverUrl || !url) {
+        return url;
+    }
+
+    return serverUrl
+        + '/hlsv2/'
+        + encodeURIComponent(filename)
+        + '/video0.m3u8?mediaURL='
+        + encodeURIComponent(url);
+}
+
+function getHtml5PlaybackUrl(url) {
+    if (state.currentStream && state.currentStream.audioWarning) {
+        return buildStreamingServerHlsUrl(url, state.currentStream);
+    }
+
+    return url;
+}
+
 function stopHtml5Playback() {
     var video = byId('videoPlayer');
     try {
+        destroyHlsPlayer();
+        state.html5FallbackUrl = '';
         video.pause();
         video.removeAttribute('src');
         video.load();
@@ -1668,7 +1812,7 @@ function renderTrackSelectors() {
 
     byId('audioTrackCount').textContent = audioTracks.length
         ? String(audioTracks.length) + ' option' + (audioTracks.length === 1 ? '' : 's')
-        : 'Default only';
+        : (state.currentStream && state.currentStream.audioWarning ? 'Server decode' : 'Default only');
     byId('subtitleTrackCount').textContent = preferredSubtitleTracks.length
         ? String(preferredSubtitleTracks.length) + ' option' + (preferredSubtitleTracks.length === 1 ? '' : 's')
         : 'Off';
@@ -2553,11 +2697,14 @@ function activatePointerNavElement(element) {
 }
 
 function activateHomeRailHover(card) {
+    var event = arguments[1] || {};
     var key = card.getAttribute('data-home-rail-key');
     var entryIndex = parseInt(card.getAttribute('data-home-entry-index'), 10);
     var descriptor;
     var previousIndex;
     var direction;
+    var now = Date.now();
+    var movedEnough = true;
 
     if (!key || isNaN(entryIndex)) {
         return false;
@@ -2568,8 +2715,20 @@ function activateHomeRailHover(card) {
         return false;
     }
 
+    state.homeRailPointerActiveUntil = now + 4200;
     previousIndex = state.homeRailIndices[key] || 0;
     if (previousIndex !== entryIndex) {
+        if (typeof event.clientX === 'number' && typeof event.clientY === 'number') {
+            movedEnough = state.homeRailHoverX === null
+                || Math.abs(event.clientX - state.homeRailHoverX) > 10
+                || Math.abs(event.clientY - state.homeRailHoverY) > 10;
+            state.homeRailHoverX = event.clientX;
+            state.homeRailHoverY = event.clientY;
+        }
+        if (!movedEnough || now < state.homeRailHoverLockUntil) {
+            return true;
+        }
+        state.homeRailHoverLockUntil = now + HOME_RAIL_HOVER_COOLDOWN_MS;
         direction = entryIndex > previousIndex ? 'right' : 'left';
         state.homeRailIndices[key] = entryIndex;
         renderSingleHomeRail(descriptor, direction);
@@ -2577,6 +2736,31 @@ function activateHomeRailHover(card) {
 
     activatePointerMainElement((byId(descriptor.containerId) && byId(descriptor.containerId).querySelector('.card.is-home-active')) || card);
     return true;
+}
+
+function rotateHomeRail(descriptor) {
+    if (!descriptor || !descriptor.entries.length) {
+        return;
+    }
+
+    state.homeRailIndices[descriptor.key] = ((state.homeRailIndices[descriptor.key] || 0) + 1) % descriptor.entries.length;
+    renderSingleHomeRail(descriptor, 'right');
+}
+
+function startHomeRailAutoRotation() {
+    if (state.homeRailAutoTimer) {
+        clearInterval(state.homeRailAutoTimer);
+    }
+
+    state.homeRailAutoTimer = setInterval(function() {
+        if (state.currentView !== 'home' || Date.now() < state.homeRailPointerActiveUntil) {
+            return;
+        }
+
+        getHomeRailDescriptors().filter(function(descriptor) {
+            return descriptor.key !== 'continue';
+        }).forEach(rotateHomeRail);
+    }, HOME_RAIL_AUTO_ROTATE_MS);
 }
 
 function getSearchPaneInfo() {
@@ -5327,39 +5511,64 @@ function renderPlayerState() {
 }
 
 function startHtml5Stream(url) {
+    var forceDirect = arguments[1] === true;
     var video = byId('videoPlayer');
-    var playPromise;
+    var playbackUrl = forceDirect ? url : getHtml5PlaybackUrl(url);
+    var isHls = /\.m3u8(?:\?|$)/i.test(playbackUrl);
+
+    function beginHtml5Playback() {
+        var playPromise = video.play();
+
+        if (playPromise && typeof playPromise.then === 'function') {
+            playPromise.then(function() {
+                setPlayerStatus(state.currentStream && state.currentStream.audioWarning
+                    ? (playbackUrl !== url ? 'Playing through streaming server' : 'Playing (HTML5, audio may be unsupported)')
+                    : 'Playing (HTML5)');
+                setPlayerToggleUi(true);
+                readHtml5Metrics();
+                startPlaybackTicker();
+                scheduleTrackRefresh();
+            }).catch(function(error) {
+                setPlayerStatus('Play blocked: ' + error.message);
+                setPlayerToggleUi(false);
+            });
+        } else {
+            setPlayerToggleUi(true);
+        }
+    }
 
     stopAvplayPlayback();
+    destroyHlsPlayer();
     byId('avplaySurface').classList.remove('is-active');
     video.classList.remove('is-hidden');
     state.playerMode = 'html5';
+    state.html5FallbackUrl = playbackUrl !== url ? url : '';
 
-    if (video.getAttribute('src') !== url) {
-        video.src = url;
+    if (isHls && typeof Hls !== 'undefined' && Hls.isSupported()) {
+        state.hlsPlayer = new Hls({
+            enableWorker: true,
+            lowLatencyMode: false
+        });
+        state.hlsPlayer.on(Hls.Events.ERROR, function(_, data) {
+            if (data && data.fatal && state.html5FallbackUrl) {
+                setPlayerStatus('Streaming server unavailable, falling back to direct HTML5');
+                startHtml5Stream(state.html5FallbackUrl, true);
+            }
+        });
+        state.hlsPlayer.on(Hls.Events.MANIFEST_PARSED, beginHtml5Playback);
+        state.hlsPlayer.loadSource(playbackUrl);
+        state.hlsPlayer.attachMedia(video);
+    } else if (video.getAttribute('src') !== playbackUrl) {
+        video.src = playbackUrl;
         video.load();
     }
 
     setPlayerStatus(state.currentStream && state.currentStream.audioWarning
-        ? 'Loading (HTML5, audio may be unsupported)'
+        ? (playbackUrl !== url ? 'Loading through streaming server' : 'Loading (HTML5, audio may be unsupported)')
         : 'Loading (HTML5)');
     resetPlaybackMetrics();
-    playPromise = video.play();
-    if (playPromise && typeof playPromise.then === 'function') {
-        playPromise.then(function() {
-            setPlayerStatus(state.currentStream && state.currentStream.audioWarning
-                ? 'Playing (HTML5, audio may be unsupported)'
-                : 'Playing (HTML5)');
-            setPlayerToggleUi(true);
-            readHtml5Metrics();
-            startPlaybackTicker();
-            scheduleTrackRefresh();
-        }).catch(function(error) {
-            setPlayerStatus('Play blocked: ' + error.message);
-            setPlayerToggleUi(false);
-        });
-    } else {
-        setPlayerToggleUi(true);
+    if (!(isHls && typeof Hls !== 'undefined' && Hls.isSupported())) {
+        beginHtml5Playback();
     }
 }
 
@@ -6131,7 +6340,7 @@ function bindPointerHover() {
         }
 
         if (target.classList && target.classList.contains('card') && target.hasAttribute('data-home-rail-key')) {
-            activateHomeRailHover(target);
+            activateHomeRailHover(target, event);
             return;
         }
 
@@ -6300,7 +6509,6 @@ function bindPlayer() {
     var seekForwardGlyph = byId('playerSeekForwardButton');
     var nextEpisodeGlyph = byId('playerNextEpisodeButton');
     var audioGlyph = byId('playerAudioButton');
-    var reloadGlyph = byId('playerReloadButton');
 
     controller.addEventListener('click', function(event) {
         event.stopPropagation();
@@ -6317,9 +6525,6 @@ function bindPlayer() {
     }
     if (audioGlyph && audioGlyph.firstElementChild) {
         audioGlyph.firstElementChild.innerHTML = '&#9835;';
-    }
-    if (reloadGlyph && reloadGlyph.firstElementChild) {
-        reloadGlyph.firstElementChild.innerHTML = '&#8635;';
     }
 
     byId('playerSeekBackButton').addEventListener('click', function() {
@@ -6338,9 +6543,27 @@ function bindPlayer() {
         playNextEpisode();
     });
 
-    byId('playerProgressButton').addEventListener('click', function() {
-        showPlayerChrome(true);
-        setPlayerStatus('Hold left or right to scrub, release to seek');
+    byId('playerProgressButton').addEventListener('pointerdown', function(event) {
+        event.preventDefault();
+        event.stopPropagation();
+        beginProgressPointerSeek(event);
+    });
+
+    byId('playerProgressButton').addEventListener('pointermove', function(event) {
+        if (!state.progressDragActive) {
+            return;
+        }
+        event.preventDefault();
+        updateProgressPointerPreview(event);
+    });
+
+    byId('playerProgressButton').addEventListener('pointerup', function(event) {
+        event.preventDefault();
+        finishProgressPointerSeek(true);
+    });
+
+    byId('playerProgressButton').addEventListener('pointercancel', function() {
+        finishProgressPointerSeek(false);
     });
 
     byId('playerAudioButton').addEventListener('click', function() {
@@ -6349,14 +6572,6 @@ function bindPlayer() {
 
     byId('playerSubtitleButton').addEventListener('click', function() {
         cycleSubtitleTrack();
-    });
-
-    byId('playerReloadButton').addEventListener('click', function() {
-        if (!state.currentStream || !state.currentStream.playable || !state.currentStream.raw || !state.currentStream.raw.url) {
-            setPlayerStatus('No playable stream selected');
-            return;
-        }
-        loadCurrentStream();
     });
 
     byId('playerFullscreenButton').addEventListener('click', function() {
@@ -6386,7 +6601,7 @@ function bindPlayer() {
     video.addEventListener('playing', function() {
         setPlayerToggleUi(true);
         setPlayerStatus(state.currentStream && state.currentStream.audioWarning
-            ? 'Playing (HTML5, audio may be unsupported)'
+            ? (state.html5FallbackUrl ? 'Playing through streaming server' : 'Playing (HTML5, audio may be unsupported)')
             : 'Playing');
         startPlaybackTicker();
         refreshPlaybackTracks();
@@ -6409,6 +6624,11 @@ function bindPlayer() {
     video.addEventListener('error', function() {
         stopPlaybackTicker();
         setPlayerToggleUi(false);
+        if (state.html5FallbackUrl) {
+            setPlayerStatus('Streaming server failed, falling back to direct HTML5');
+            startHtml5Stream(state.html5FallbackUrl, true);
+            return;
+        }
         setPlayerStatus('Playback error');
     });
 
@@ -6723,6 +6943,7 @@ function init() {
     bindBrowse();
     bindLogin();
     bindPlayer();
+    startHomeRailAutoRotation();
 
     restoreStoredSession();
     restoreContinueWatching();
