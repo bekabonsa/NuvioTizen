@@ -1224,34 +1224,6 @@ select#seasonSelect option {
     overflow: hidden;
 }
 
-.stream-badge {
-    min-width: 78px;
-    max-width: 96px;
-    min-height: 30px;
-    padding: 6px 10px;
-    border-radius: 999px;
-    background: rgba(255, 255, 255, 0.10);
-    color: #fff;
-    font-size: 12px;
-    font-weight: 700;
-    text-align: center;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    justify-self: end;
-    align-self: start;
-}
-
-.stream-badge.is-error {
-    background: rgba(255, 124, 124, 0.16);
-    color: #ffd0d0;
-}
-
-.stream-badge.is-warning {
-    background: rgba(255, 196, 87, 0.16);
-    color: #ffe0a3;
-}
-
 .search-toolbar {
     display: grid;
     grid-template-columns: minmax(0, 1.45fr) auto auto;

@@ -11,6 +11,7 @@ var STORAGE_CONTINUE = 'nuviowebpc.continueWatching';
 var LEGACY_STORAGE_CONTINUE = 'nuviotizen.continueWatching';
 var STORAGE_WATCHED = 'nuviowebpc.watchedVideos';
 var STORAGE_STREAMING_SERVER = 'nuviowebpc.streamingServerUrl';
+var STORAGE_TRANSCODER_QUALITY = 'nuviowebpc.transcoderQuality';
 var APP_DEVICE_NAME = 'Nuvio Web PC';
 var FALLBACK_MOVIE_GENRES = ['Top', 'Action', 'Comedy', 'Drama', 'Sci-Fi', 'Thriller', 'Animation', 'Documentary'];
 var FALLBACK_SERIES_GENRES = ['Top', 'Drama', 'Comedy', 'Crime', 'Sci-Fi', 'Animation', 'Thriller', 'Documentary'];
@@ -24,7 +25,8 @@ var HOME_RAIL_HOVER_COOLDOWN_MS = 650;
 var HOME_RAIL_AUTO_ROTATE_MS = 6500;
 var PLAYER_SCRUB_INITIAL_NUDGE_MS = 5000;
 var PLAYER_SCRUB_TICK_MS = 50;
-var DEFAULT_STREAMING_SERVER_URL = 'http://127.0.0.1:11470';
+var DEFAULT_STREAMING_SERVER_URL = 'https://local.strem.io:12470';
+var NUVIO_STREAMING_SERVER_URL = 'http://127.0.0.1:17870';
 var VIEW_META = {
     home: {
         eyebrow: 'Discover',
@@ -109,6 +111,9 @@ var state = {
     subtitleRequestId: 0,
     currentTimeMs: 0,
     durationMs: 0,
+    expectedDurationMs: 0,
+    transcoderOffsetMs: 0,
+    pendingSeekMs: null,
     playbackTicker: null,
     playerChromeTimer: null,
     seekPreviewActive: false,
@@ -1258,6 +1263,45 @@ function formatPlaybackTime(ms) {
     ].join(':');
 }
 
+function parseDurationMs(value) {
+    var text;
+    var parts;
+    var number;
+
+    if (typeof value === 'number' && isFinite(value)) {
+        return value > 1000 ? value : value * 60000;
+    }
+
+    text = String(value || '').trim();
+    if (!text) {
+        return 0;
+    }
+
+    parts = text.split(':').map(function(part) {
+        return parseInt(part, 10);
+    });
+    if (parts.length === 3 && parts.every(function(part) { return !isNaN(part); })) {
+        return ((parts[0] * 3600) + (parts[1] * 60) + parts[2]) * 1000;
+    }
+    if (parts.length === 2 && parts.every(function(part) { return !isNaN(part); })) {
+        return ((parts[0] * 60) + parts[1]) * 1000;
+    }
+
+    number = parseInt(text, 10);
+    if (isNaN(number)) {
+        return 0;
+    }
+
+    return number * 60000;
+}
+
+function getSelectedRuntimeMs() {
+    var video = state.selectedVideo || {};
+    var item = state.selectedItem || {};
+
+    return parseDurationMs(video.runtime || video.duration || item.runtime || item.duration);
+}
+
 function getDisplayedPlaybackTimeMs() {
     return state.seekPreviewActive ? state.seekPreviewTargetMs : state.currentTimeMs;
 }
@@ -1287,7 +1331,7 @@ function clearSeekPreviewTimer() {
 }
 
 function clampSeekPreviewTarget(targetMs) {
-    var duration = state.durationMs || 0;
+    var duration = state.durationMs || state.expectedDurationMs || 0;
     var target = Math.max(0, targetMs || 0);
 
     if (duration > 0) {
@@ -1299,13 +1343,14 @@ function clampSeekPreviewTarget(targetMs) {
 
 function updateProgressUi() {
     var displayTime = getDisplayedPlaybackTimeMs();
+    var duration = state.durationMs || state.expectedDurationMs || 0;
     var percent = 0;
-    if (state.durationMs > 0) {
-        percent = Math.max(0, Math.min(100, (displayTime / state.durationMs) * 100));
+    if (duration > 0) {
+        percent = Math.max(0, Math.min(100, (displayTime / duration) * 100));
     }
 
     byId('playerCurrentTime').textContent = formatPlaybackTime(displayTime);
-    byId('playerDuration').textContent = formatPlaybackTime(state.durationMs);
+    byId('playerDuration').textContent = formatPlaybackTime(duration);
     byId('playerProgressFill').style.width = String(percent) + '%';
     if (state.seekPreviewActive) {
         if (!state.seekPreviewDirection) {
@@ -1320,14 +1365,17 @@ function updateProgressUi() {
         return;
     }
 
-    byId('playerProgressCaption').textContent = state.durationMs > 0
+    byId('playerProgressCaption').textContent = duration > 0
         ? Math.round(percent) + '% watched'
         : 'Waiting for stream timing...';
 }
 
 function setPlaybackMetrics(currentMs, durationMs) {
-    state.currentTimeMs = Math.max(0, currentMs || 0);
+    state.currentTimeMs = Math.max(0, (currentMs || 0) + (state.transcoderOffsetMs || 0));
     state.durationMs = Math.max(0, durationMs || 0);
+    if (state.expectedDurationMs && state.durationMs && state.durationMs < state.expectedDurationMs * 0.7) {
+        state.durationMs = state.expectedDurationMs;
+    }
     updateProgressUi();
     updateSubtitleOverlay(state.currentTimeMs);
 }
@@ -1341,6 +1389,9 @@ function resetPlaybackMetrics() {
     state.seekPreviewLastTickAt = 0;
     state.currentTimeMs = 0;
     state.durationMs = 0;
+    state.transcoderOffsetMs = 0;
+    state.pendingSeekMs = null;
+    state.expectedDurationMs = getSelectedRuntimeMs();
     updateProgressUi();
 }
 
@@ -1413,8 +1464,9 @@ function startPlaybackTicker() {
 
 function seekPlaybackTo(targetMs, statusPrefix) {
     var video = byId('videoPlayer');
-    var duration = state.durationMs || 0;
+    var duration = state.durationMs || state.expectedDurationMs || 0;
     var target = Math.max(0, targetMs || 0);
+    var currentBufferedEndMs = ((state.transcoderOffsetMs || 0) + ((isFinite(video.duration) ? video.duration : 0) * 1000));
 
     if (state.seekPreviewActive) {
         clearSeekPreviewTimer();
@@ -1449,8 +1501,17 @@ function seekPlaybackTo(targetMs, statusPrefix) {
         }
     }
 
+    if (state.html5FallbackUrl && target > currentBufferedEndMs - 4000) {
+        state.pendingSeekMs = target;
+        state.transcoderOffsetMs = target;
+        setPlaybackMetrics(0, state.expectedDurationMs || duration);
+        setPlayerStatus('Preparing stream at ' + formatPlaybackTime(target));
+        startHtml5Stream(state.currentStream.raw.url);
+        return;
+    }
+
     try {
-        video.currentTime = target / 1000;
+        video.currentTime = Math.max(0, (target - (state.transcoderOffsetMs || 0)) / 1000);
         readHtml5Metrics();
         setPlayerStatus((statusPrefix || 'Skipped to ') + formatPlaybackTime(target));
     } catch (error2) {
@@ -1484,10 +1545,11 @@ function stopSeekPreview(commit) {
 
 function getProgressPointerTargetMs(event) {
     var progressButton = byId('playerProgressButton');
+    var duration = state.durationMs || state.expectedDurationMs || 0;
     var rect;
     var ratio;
 
-    if (!progressButton || !state.durationMs) {
+    if (!progressButton || !duration) {
         return 0;
     }
 
@@ -1498,11 +1560,11 @@ function getProgressPointerTargetMs(event) {
 
     ratio = (event.clientX - rect.left) / rect.width;
     ratio = Math.max(0, Math.min(1, ratio));
-    return ratio * state.durationMs;
+    return ratio * duration;
 }
 
 function updateProgressPointerPreview(event) {
-    if (!state.durationMs) {
+    if (!(state.durationMs || state.expectedDurationMs)) {
         setPlayerStatus('Stream timing unavailable');
         return;
     }
@@ -1518,7 +1580,7 @@ function updateProgressPointerPreview(event) {
 function beginProgressPointerSeek(event) {
     var progressButton = byId('playerProgressButton');
 
-    if (!state.durationMs) {
+    if (!(state.durationMs || state.expectedDurationMs)) {
         setPlayerStatus('Stream timing unavailable');
         return;
     }
@@ -1569,7 +1631,7 @@ function tickSeekPreview() {
 function beginOrUpdateSeekPreview(direction) {
     var now = Date.now();
 
-    if ((state.durationMs || 0) <= 0) {
+    if ((state.durationMs || state.expectedDurationMs || 0) <= 0) {
         seekPlaybackTo((state.currentTimeMs || 0) + (direction * 30000), direction < 0 ? 'Rewound to ' : 'Skipped to ');
         return;
     }
@@ -1645,31 +1707,56 @@ function getStreamingServerUrl() {
         stored = '';
     }
 
+    if (/^https?:\/\/(127\.0\.0\.1|localhost):11470/i.test(stored)) {
+        stored = '';
+        try {
+            localStorage.removeItem(STORAGE_STREAMING_SERVER);
+        } catch (error3) {
+            // no-op
+        }
+    }
+
     return (stored || DEFAULT_STREAMING_SERVER_URL).replace(/\/+$/, '');
 }
 
-function buildStreamingServerHlsUrl(url, streamEntry) {
+function buildStreamingServerHlsUrl(url, streamEntry, serverUrlOverride, seekMs) {
     var raw = streamEntry && streamEntry.raw ? streamEntry.raw : {};
-    var serverUrl = getStreamingServerUrl();
+    var serverUrl = (serverUrlOverride || getStreamingServerUrl()).replace(/\/+$/, '');
     var filename = raw.filename || deriveFilenameFromUrl(url) || 'stream.mkv';
+    var requestUrl;
 
     if (!serverUrl || !url) {
         return url;
     }
 
-    return serverUrl
+    requestUrl = serverUrl
         + '/hlsv2/'
         + encodeURIComponent(filename)
         + '/video0.m3u8?mediaURL='
         + encodeURIComponent(url);
+
+    if (seekMs && seekMs > 0) {
+        requestUrl += '&seek=' + encodeURIComponent(String(Math.floor(seekMs / 1000)));
+    }
+    requestUrl += '&quality=' + encodeURIComponent(localStorage.getItem(STORAGE_TRANSCODER_QUALITY) || 'auto');
+
+    return requestUrl;
 }
 
 function getHtml5PlaybackUrl(url) {
-    if (state.currentStream && state.currentStream.audioWarning) {
-        return buildStreamingServerHlsUrl(url, state.currentStream);
+    if (!url) {
+        return '';
     }
 
-    return url;
+    if (/\.m3u8(?:\?|$)/i.test(url)) {
+        return url;
+    }
+
+    return buildStreamingServerHlsUrl(url, state.currentStream, '', state.pendingSeekMs || 0);
+}
+
+function getCorsSafeStreamingUrl(url) {
+    return buildStreamingServerHlsUrl(url, state.currentStream, DEFAULT_STREAMING_SERVER_URL, state.pendingSeekMs || 0);
 }
 
 function stopHtml5Playback() {
@@ -1812,7 +1899,7 @@ function renderTrackSelectors() {
 
     byId('audioTrackCount').textContent = audioTracks.length
         ? String(audioTracks.length) + ' option' + (audioTracks.length === 1 ? '' : 's')
-        : (state.currentStream && state.currentStream.audioWarning ? 'Server decode' : 'Default only');
+        : (state.currentStream && state.html5FallbackUrl ? 'Server decode' : 'Default only');
     byId('subtitleTrackCount').textContent = preferredSubtitleTracks.length
         ? String(preferredSubtitleTracks.length) + ' option' + (preferredSubtitleTracks.length === 1 ? '' : 's')
         : 'Off';
@@ -5119,15 +5206,12 @@ function fetchStreamsFromAddon(addon, type, videoId) {
                 var title = stream.name || stream.title || stream.description || 'Unnamed stream';
                 var description = stream.description || stream.title || '';
                 var playable = !!stream.url;
-                var status = playable ? 'Playable' : 'Needs proxy';
+                var status = playable ? '' : 'Needs proxy';
                 var audioWarning = getDesktopAudioWarning(stream);
 
                 if (stream.behaviorHints && stream.behaviorHints.notWebReady) {
                     playable = false;
                     status = 'Not web ready';
-                }
-                if (playable && audioWarning) {
-                    status = 'Audio risk';
                 }
 
                 return {
@@ -5341,7 +5425,6 @@ function renderStreams() {
         var button = document.createElement('button');
         var main = document.createElement('div');
         var body = document.createElement('div');
-        var badge = document.createElement('div');
         var title = document.createElement('div');
         var addon = document.createElement('div');
         var note = document.createElement('div');
@@ -5355,28 +5438,18 @@ function renderStreams() {
 
         main.className = 'stream-card-main';
         body.className = 'stream-card-body';
-        badge.className = 'stream-badge';
         title.className = 'stream-card-title';
         addon.className = 'stream-card-addon';
         note.className = 'stream-card-note';
 
         title.textContent = streamEntry.title;
         addon.textContent = streamEntry.addonName;
-        note.textContent = streamEntry.audioWarning || streamEntry.description || 'No extra stream description.';
-        badge.textContent = streamEntry.status;
-
-        if (!streamEntry.playable) {
-            badge.classList.add('is-error');
-        } else if (streamEntry.audioWarning) {
-            badge.classList.add('is-warning');
-            button.title = streamEntry.audioWarning;
-        }
+        note.textContent = streamEntry.description || 'No extra stream description.';
 
         body.appendChild(title);
         body.appendChild(addon);
         body.appendChild(note);
         main.appendChild(body);
-        main.appendChild(badge);
         button.appendChild(main);
         list.appendChild(button);
     });
@@ -5489,9 +5562,8 @@ function renderPlayerState() {
     byId('playerAddon').textContent = stream.addonName;
     byId('playerSource').textContent = stream.raw && stream.raw.url ? stream.raw.url : stream.status;
     byId('playerDescription').textContent =
-        stream.audioWarning
-            ? stream.audioWarning + '. Pick an AAC/MP4 source or use a native/transcoded player for this file.'
-            : (stream.description || 'This stream came from the selected addon source.');
+        (stream.description || 'This stream came from the selected addon source.') +
+        ' Audio is routed through the local streaming server when the source is not browser-native HLS.';
     syncExternalSubtitleTracks();
 
     if (!stream.playable || !stream.raw || !stream.raw.url) {
@@ -5512,18 +5584,24 @@ function renderPlayerState() {
 
 function startHtml5Stream(url) {
     var forceDirect = arguments[1] === true;
+    var retryCorsSafe = arguments[2] === true;
+    var serverOverride = arguments[3] || '';
     var video = byId('videoPlayer');
-    var playbackUrl = forceDirect ? url : getHtml5PlaybackUrl(url);
+    var seekMs = state.pendingSeekMs || 0;
+    var playbackUrl = serverOverride
+        ? buildStreamingServerHlsUrl(url, state.currentStream, serverOverride, seekMs)
+        : (retryCorsSafe ? getCorsSafeStreamingUrl(url) : (forceDirect ? url : getHtml5PlaybackUrl(url)));
     var isHls = /\.m3u8(?:\?|$)/i.test(playbackUrl);
+    var usesStreamingServer = playbackUrl !== url;
+    var isCorsUnsafeLocal = /^http:\/\/(127\.0\.0\.1|localhost):11470/i.test(playbackUrl);
+    var isStremioLocal = /^https:\/\/local\.strem\.io:12470/i.test(playbackUrl);
 
     function beginHtml5Playback() {
         var playPromise = video.play();
 
         if (playPromise && typeof playPromise.then === 'function') {
             playPromise.then(function() {
-                setPlayerStatus(state.currentStream && state.currentStream.audioWarning
-                    ? (playbackUrl !== url ? 'Playing through streaming server' : 'Playing (HTML5, audio may be unsupported)')
-                    : 'Playing (HTML5)');
+                setPlayerStatus(usesStreamingServer ? 'Playing through streaming server' : 'Playing (HTML5)');
                 setPlayerToggleUi(true);
                 readHtml5Metrics();
                 startPlaybackTicker();
@@ -5541,8 +5619,13 @@ function startHtml5Stream(url) {
     destroyHlsPlayer();
     byId('avplaySurface').classList.remove('is-active');
     video.classList.remove('is-hidden');
+    video.muted = false;
+    video.defaultMuted = false;
+    video.volume = 1;
     state.playerMode = 'html5';
     state.html5FallbackUrl = playbackUrl !== url ? url : '';
+    state.transcoderOffsetMs = usesStreamingServer ? seekMs : 0;
+    state.pendingSeekMs = null;
 
     if (isHls && typeof Hls !== 'undefined' && Hls.isSupported()) {
         state.hlsPlayer = new Hls({
@@ -5550,22 +5633,37 @@ function startHtml5Stream(url) {
             lowLatencyMode: false
         });
         state.hlsPlayer.on(Hls.Events.ERROR, function(_, data) {
-            if (data && data.fatal && state.html5FallbackUrl) {
-                setPlayerStatus('Streaming server unavailable, falling back to direct HTML5');
-                startHtml5Stream(state.html5FallbackUrl, true);
+            if (data && data.fatal) {
+                if (isCorsUnsafeLocal && !retryCorsSafe) {
+                    setPlayerStatus('Retrying streaming server through local.strem.io');
+                    startHtml5Stream(url, false, true);
+                    return;
+                }
+                if (isStremioLocal && serverOverride !== NUVIO_STREAMING_SERVER_URL) {
+                    setPlayerStatus('Stremio Service unavailable, trying Nuvio transcoder');
+                    startHtml5Stream(url, false, false, NUVIO_STREAMING_SERVER_URL);
+                    return;
+                }
+                setPlayerToggleUi(false);
+                setPlayerStatus(usesStreamingServer
+                    ? 'Streaming server unavailable. Start Stremio Service or tools/nuvio-transcoder.py.'
+                    : 'HLS playback failed');
             }
         });
         state.hlsPlayer.on(Hls.Events.MANIFEST_PARSED, beginHtml5Playback);
         state.hlsPlayer.loadSource(playbackUrl);
         state.hlsPlayer.attachMedia(video);
+    } else if (isHls && !video.canPlayType('application/vnd.apple.mpegurl')) {
+        setPlayerStatus('HLS playback library unavailable. Check network access to hls.js.');
+        setPlayerToggleUi(false);
+        resetPlaybackMetrics();
+        return;
     } else if (video.getAttribute('src') !== playbackUrl) {
         video.src = playbackUrl;
         video.load();
     }
 
-    setPlayerStatus(state.currentStream && state.currentStream.audioWarning
-        ? (playbackUrl !== url ? 'Loading through streaming server' : 'Loading (HTML5, audio may be unsupported)')
-        : 'Loading (HTML5)');
+    setPlayerStatus(usesStreamingServer ? 'Loading through streaming server' : 'Loading (HTML5)');
     resetPlaybackMetrics();
     if (!(isHls && typeof Hls !== 'undefined' && Hls.isSupported())) {
         beginHtml5Playback();
@@ -6600,9 +6698,7 @@ function bindPlayer() {
     video.addEventListener('durationchange', readHtml5Metrics);
     video.addEventListener('playing', function() {
         setPlayerToggleUi(true);
-        setPlayerStatus(state.currentStream && state.currentStream.audioWarning
-            ? (state.html5FallbackUrl ? 'Playing through streaming server' : 'Playing (HTML5, audio may be unsupported)')
-            : 'Playing');
+        setPlayerStatus(state.html5FallbackUrl ? 'Playing through streaming server' : 'Playing');
         startPlaybackTicker();
         refreshPlaybackTracks();
     });
@@ -6624,12 +6720,9 @@ function bindPlayer() {
     video.addEventListener('error', function() {
         stopPlaybackTicker();
         setPlayerToggleUi(false);
-        if (state.html5FallbackUrl) {
-            setPlayerStatus('Streaming server failed, falling back to direct HTML5');
-            startHtml5Stream(state.html5FallbackUrl, true);
-            return;
-        }
-        setPlayerStatus('Playback error');
+        setPlayerStatus(state.html5FallbackUrl
+            ? 'Streaming server required for audio. Start Stremio Service.'
+            : 'Playback error');
     });
 
     window.addEventListener('resize', syncAvplayRect);
