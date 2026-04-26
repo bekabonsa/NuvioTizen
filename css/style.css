@@ -17,6 +17,7 @@
     --accent-soft: rgba(255, 255, 255, 0.14);
     --shadow: 0 26px 80px rgba(0, 0, 0, 0.42);
     --shadow-soft: 0 16px 36px rgba(0, 0, 0, 0.28);
+    --focus-ease: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 html,
@@ -177,7 +178,12 @@ body.is-player-fullscreen .app-frame {
     gap: 10px;
     font-size: 24px;
     font-weight: 600;
-    transition: background 110ms ease, border-color 110ms ease, color 110ms ease, transform 110ms ease, box-shadow 110ms ease;
+    transition:
+        background 180ms var(--focus-ease),
+        border-color 180ms var(--focus-ease),
+        color 180ms var(--focus-ease),
+        transform 180ms var(--focus-ease),
+        box-shadow 180ms var(--focus-ease);
     backface-visibility: hidden;
     will-change: transform;
 }
@@ -308,6 +314,7 @@ body.is-player-fullscreen .app-frame {
     overflow-y: auto;
     overflow-x: hidden;
     padding: 0 10px 48px;
+    scroll-behavior: smooth;
     scrollbar-width: none;
     -ms-overflow-style: none;
 }
@@ -329,10 +336,11 @@ body.is-player-fullscreen .app-frame {
 }
 
 .content-row {
-    transition: opacity 90ms ease, transform 90ms ease;
+    transition: opacity 220ms var(--focus-ease), transform 220ms var(--focus-ease);
     backface-visibility: hidden;
     opacity: 1;
     transform: translate3d(0, 0, 0);
+    will-change: opacity, transform;
 }
 
 .content-row.is-row-current {
@@ -352,12 +360,12 @@ body.is-player-fullscreen .app-frame {
 
 body[data-current-view="home"] .content-row.is-row-near {
     opacity: 1;
-    transform: none;
+    transform: translate3d(0, 2px, 0);
 }
 
 body[data-current-view="home"] .content-row.is-row-far {
-    opacity: 1;
-    transform: none;
+    opacity: 0.98;
+    transform: translate3d(0, 4px, 0);
 }
 
 body[data-current-view="movies"] .content-row.is-row-near,
@@ -366,7 +374,7 @@ body[data-current-view="search"] .content-row.is-row-near,
 body[data-current-view="addons"] .content-row.is-row-near,
 body[data-current-view="player"] .content-row.is-row-near {
     opacity: 1;
-    transform: none;
+    transform: translate3d(0, 2px, 0);
 }
 
 body[data-current-view="movies"] .content-row.is-row-far,
@@ -374,8 +382,8 @@ body[data-current-view="series"] .content-row.is-row-far,
 body[data-current-view="search"] .content-row.is-row-far,
 body[data-current-view="addons"] .content-row.is-row-far,
 body[data-current-view="player"] .content-row.is-row-far {
-    opacity: 1;
-    transform: none;
+    opacity: 0.98;
+    transform: translate3d(0, 4px, 0);
 }
 
 .hero-banner,
@@ -540,7 +548,12 @@ body[data-current-view="player"] .content-row.is-row-far {
     gap: 10px;
     font-size: 18px;
     font-weight: 700;
-    transition: transform 110ms ease, background 110ms ease, border-color 110ms ease, box-shadow 110ms ease, color 110ms ease;
+    transition:
+        transform 180ms var(--focus-ease),
+        background 180ms var(--focus-ease),
+        border-color 180ms var(--focus-ease),
+        box-shadow 180ms var(--focus-ease),
+        color 180ms var(--focus-ease);
     backface-visibility: hidden;
     will-change: transform;
     user-select: none;
@@ -610,7 +623,7 @@ body[data-current-view="player"] .content-row.is-row-far {
     padding: 10px 8px 20px;
     scrollbar-width: none;
     -ms-overflow-style: none;
-    scroll-behavior: auto;
+    scroll-behavior: smooth;
 }
 
 .rail-continue {
@@ -695,7 +708,11 @@ body[data-current-view="player"] .content-row.is-row-far {
     color: inherit;
     text-align: left;
     transform-origin: center center;
-    transition: transform 95ms ease, box-shadow 95ms ease, border-color 95ms ease, opacity 95ms ease;
+    transition:
+        transform 180ms var(--focus-ease),
+        box-shadow 180ms var(--focus-ease),
+        border-color 180ms var(--focus-ease),
+        opacity 180ms var(--focus-ease);
     backface-visibility: hidden;
     will-change: transform;
     overflow: visible;
@@ -1798,7 +1815,7 @@ input:focus {
     border-color: rgba(255, 255, 255, 0.5);
     background: rgba(255, 255, 255, 0.14);
     box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.34), 0 16px 30px rgba(0, 0, 0, 0.3);
-    /*transform: translateY(-2px);*/
+    transform: translateY(-2px);
 }
 
 .card:focus,

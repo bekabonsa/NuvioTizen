@@ -3190,6 +3190,95 @@ function clampMainFocus(rows) {
     }
 }
 
+function focusElementSmoothly(el) {
+    if (!el || typeof el.focus !== 'function') {
+        return;
+    }
+
+    try {
+        el.focus({
+            preventScroll: true
+        });
+    } catch (error) {
+        el.focus();
+    }
+}
+
+function easeNavigationScroll(progress) {
+    return 1 - Math.pow(1 - progress, 4);
+}
+
+function scrollContainerTo(container, scrollOptions) {
+    var duration = scrollOptions && scrollOptions.duration ? scrollOptions.duration : 520;
+    var animate = scrollOptions && scrollOptions.behavior === 'smooth' && typeof requestAnimationFrame === 'function';
+    var startLeft;
+    var startTop;
+    var targetLeft;
+    var targetTop;
+    var maxLeft;
+    var maxTop;
+    var startedAt;
+
+    if (!container) {
+        return;
+    }
+
+    if (typeof cancelAnimationFrame === 'function' && container.__nuvioScrollFrame) {
+        cancelAnimationFrame(container.__nuvioScrollFrame);
+        container.__nuvioScrollFrame = null;
+    }
+
+    maxLeft = Math.max(0, container.scrollWidth - container.clientWidth);
+    maxTop = Math.max(0, container.scrollHeight - container.clientHeight);
+    startLeft = container.scrollLeft;
+    startTop = container.scrollTop;
+    targetLeft = typeof scrollOptions.left === 'number' ? Math.max(0, Math.min(maxLeft, scrollOptions.left)) : startLeft;
+    targetTop = typeof scrollOptions.top === 'number' ? Math.max(0, Math.min(maxTop, scrollOptions.top)) : startTop;
+
+    if (!animate || (Math.abs(targetLeft - startLeft) < 1 && Math.abs(targetTop - startTop) < 1)) {
+        container.scrollLeft = targetLeft;
+        container.scrollTop = targetTop;
+        return;
+    }
+
+    startedAt = performance.now();
+
+    function tick(now) {
+        var progress = Math.min(1, (now - startedAt) / duration);
+        var eased = easeNavigationScroll(progress);
+
+        container.scrollLeft = startLeft + ((targetLeft - startLeft) * eased);
+        container.scrollTop = startTop + ((targetTop - startTop) * eased);
+
+        if (progress < 1) {
+            container.__nuvioScrollFrame = requestAnimationFrame(tick);
+            return;
+        }
+
+        container.scrollLeft = targetLeft;
+        container.scrollTop = targetTop;
+        container.__nuvioScrollFrame = null;
+    }
+
+    container.__nuvioScrollFrame = requestAnimationFrame(tick);
+}
+
+function scrollWindowToTopSmoothly() {
+    if (typeof requestAnimationFrame !== 'function') {
+        window.scrollTo(0, 0);
+        return;
+    }
+
+    try {
+        window.scrollTo({
+            top: 0,
+            behavior: 'smooth'
+        });
+    } catch (error) {
+        window.scrollTo(0, 0);
+    }
+}
+
 function scrollElementIntoView(el) {
     var parent = el ? el.parentNode : null;
 
@@ -3207,18 +3296,30 @@ function scrollElementIntoView(el) {
         var left = el.offsetLeft - 18;
         var right = el.offsetLeft + el.offsetWidth + 18;
         if (left < parent.scrollLeft) {
-            parent.scrollLeft = left;
+            scrollContainerTo(parent, {
+                left: left,
+                behavior: 'smooth',
+                duration: 460
+            });
         } else if (right > parent.scrollLeft + parent.clientWidth) {
-            parent.scrollLeft = right - parent.clientWidth;
+            scrollContainerTo(parent, {
+                left: right - parent.clientWidth,
+                behavior: 'smooth',
+                duration: 460
+            });
         }
     }
 }
 
 function scrollActiveViewToTop() {
     var activeView = queryAll('.view.is-active')[0];
-    window.scrollTo(0, 0);
+    scrollWindowToTopSmoothly();
     if (activeView) {
-        activeView.scrollTop = 0;
+        scrollContainerTo(activeView, {
+            top: 0,
+            behavior: 'smooth',
+            duration: 560
+        });
     }
 }
 
@@ -3226,29 +3327,30 @@ function scrollRowContainerIntoView(container) {
     var activeView = queryAll('.view.is-active')[0];
     var containerRect;
     var viewRect;
-    var topDelta;
-    var bottomDelta;
-    var margin = 20;
+    var targetTop;
+    var margin = 22;
 
     if (!activeView || !container) {
         return;
     }
 
     if (state.mainRow === 0) {
-        activeView.scrollTop = 0;
+        scrollContainerTo(activeView, {
+            top: 0,
+            behavior: 'smooth',
+            duration: 560
+        });
         return;
     }
 
     containerRect = container.getBoundingClientRect();
     viewRect = activeView.getBoundingClientRect();
-    topDelta = containerRect.top - (viewRect.top + margin);
-    bottomDelta = containerRect.bottom - (viewRect.bottom - margin);
-
-    if (topDelta < 0) {
-        activeView.scrollTop += topDelta;
-    } else if (bottomDelta > 0) {
-        activeView.scrollTop += bottomDelta;
-    }
+    targetTop = activeView.scrollTop + containerRect.top - viewRect.top - margin;
+    scrollContainerTo(activeView, {
+        top: targetTop,
+        behavior: 'smooth',
+        duration: 620
+    });
 }
 
 function updateRowEmphasis() {
@@ -3307,7 +3409,7 @@ function focusCurrent(force) {
         }
 
         scrollActiveViewToTop();
-        navItems[state.navIndex].focus();
+        focusElementSmoothly(navItems[state.navIndex]);
         updateRowEmphasis();
         return;
     }
@@ -3332,7 +3434,7 @@ function focusCurrent(force) {
         scrollRowContainerIntoView(rowContainers[state.mainRow]);
     }
 
-    rows[state.mainRow][state.mainCol].focus();
+    focusElementSmoothly(rows[state.mainRow][state.mainCol]);
     scrollElementIntoView(rows[state.mainRow][state.mainCol]);
     updateRowEmphasis();
     if (state.currentView === 'player' && state.playerFullscreen) {
