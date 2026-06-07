@@ -772,13 +772,16 @@ body[data-current-view="player"] .content-row.is-row-far {
 }
 
 .info-grid {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    display: flex;
+    /*grid-template-columns: repeat(3, minmax(0, 1fr));*/
     gap: 14px;
     margin-top: 22px;
+    flex-direction: row;
+    gap: 20px;
 }
 
 .info-tile {
+    flex: 1;
     padding: 16px;
     border-radius: 18px;
     background: rgba(255, 255, 255, 0.04);

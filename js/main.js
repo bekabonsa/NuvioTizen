@@ -446,15 +446,36 @@ function saveContinueWatching() {
 
 function restoreContinueWatching() {
     var payload = safeJsonParse(localStorage.getItem(STORAGE_CONTINUE));
+    var normalized = [];
+    var seen = {};
+    var changed = false;
 
     if (!Array.isArray(payload)) {
         state.continueWatching = [];
         return;
     }
 
-    state.continueWatching = payload.filter(function(entry) {
-        return entry && entry.item && entry.kind && entry.item.id;
-    }).slice(0, 12);
+    payload.forEach(function(entry) {
+        var key;
+
+        if (!entry || !entry.item || !entry.kind || !entry.item.id) {
+            return;
+        }
+
+        key = entry.kind + ':' + entry.item.id;
+        if (seen[key]) {
+            changed = true;
+            return;
+        }
+
+        seen[key] = true;
+        normalized.push(entry);
+    });
+
+    state.continueWatching = normalized.slice(0, 12);
+    if (changed || normalized.length !== payload.length) {
+        saveContinueWatching();
+    }
 }
 
 function trackContinueWatching(item, kind, video) {
@@ -475,10 +496,10 @@ function trackContinueWatching(item, kind, video) {
             episode: getVideoEpisode(video)
         } : null
     };
-    key = snapshot.kind + ':' + snapshot.item.id + ':' + (snapshot.video && snapshot.video.id ? snapshot.video.id : '');
+    key = snapshot.kind + ':' + snapshot.item.id;
 
     state.continueWatching = [snapshot].concat(state.continueWatching.filter(function(entry) {
-        var entryKey = entry.kind + ':' + entry.item.id + ':' + (entry.video && entry.video.id ? entry.video.id : '');
+        var entryKey = entry.kind + ':' + entry.item.id;
         return entryKey !== key;
     })).slice(0, 12);
 
@@ -518,7 +539,7 @@ function normalizeTrackLabel(type, info, index) {
     var label = '';
 
     if (info) {
-        language = info.language || info.lang || info.track_lang || info.subtitle_lang || '';
+        language = info.language || info.lang || info.track_lang || info.subtitle_lang || info.languageCode || info.iso639_1 || info.iso639_2 || info.ISO639 || '';
         codec = info.codec_fourcc || info.codec || '';
         label = info.label || info.track_name || info.name || '';
     }
@@ -555,6 +576,19 @@ function isEnglishSubtitleValue(value) {
         || normalized.indexOf('english') !== -1;
 }
 
+function isEnglishSubtitleSource(value) {
+    var normalized = String(value || '').toLowerCase();
+    var filename = normalized.split('#')[0].split('?')[0].split('/').pop();
+
+    try {
+        filename = decodeURIComponent(filename);
+    } catch (error) {
+        // Keep the raw filename.
+    }
+
+    return /(^|[._\-\s])(en|eng|english)([._\-\s]|$)/.test(filename);
+}
+
 function isEnglishSubtitleEntry(info) {
     if (!info || typeof info !== 'object') {
         return false;
@@ -564,9 +598,17 @@ function isEnglishSubtitleEntry(info) {
         || isEnglishSubtitleValue(info.lang)
         || isEnglishSubtitleValue(info.track_lang)
         || isEnglishSubtitleValue(info.subtitle_lang)
+        || isEnglishSubtitleValue(info.languageCode)
+        || isEnglishSubtitleValue(info.iso639_1)
+        || isEnglishSubtitleValue(info.iso639_2)
+        || isEnglishSubtitleValue(info.ISO639)
         || isEnglishSubtitleValue(info.label)
         || isEnglishSubtitleValue(info.track_name)
-        || isEnglishSubtitleValue(info.name);
+        || isEnglishSubtitleValue(info.name)
+        || isEnglishSubtitleSource(info.filename)
+        || isEnglishSubtitleSource(info.url)
+        || isEnglishSubtitleSource(info.src)
+        || isEnglishSubtitleSource(info.file);
 }
 
 function isExternalSubtitleTrackId(trackId) {
@@ -1025,6 +1067,73 @@ function cycleSubtitleTrack() {
     });
     nextIndex = (nextIndex + 1 + tracks.length) % tracks.length;
     selectSubtitleTrack(tracks[nextIndex].id);
+}
+
+function getSortedSeriesVideos() {
+    return (state.allSeriesVideos || []).slice().sort(function(left, right) {
+        var seasonDelta = getVideoSeason(left) - getVideoSeason(right);
+
+        if (seasonDelta) {
+            return seasonDelta;
+        }
+
+        return getVideoEpisode(left) - getVideoEpisode(right);
+    });
+}
+
+function getNextEpisode() {
+    var videos = getSortedSeriesVideos();
+    var currentId = state.selectedVideo && state.selectedVideo.id;
+    var currentIndex;
+
+    if (state.selectedType !== 'series' || !currentId || !videos.length) {
+        return null;
+    }
+
+    currentIndex = videos.findIndex(function(video) {
+        return video.id === currentId;
+    });
+
+    if (currentIndex === -1 || currentIndex >= videos.length - 1) {
+        return null;
+    }
+
+    return videos[currentIndex + 1];
+}
+
+function setPlayerNextEpisodeUi() {
+    var button = byId('playerNextEpisodeButton');
+    var nextEpisode = getNextEpisode();
+
+    if (!button) {
+        return;
+    }
+
+    button.disabled = !nextEpisode;
+    button.setAttribute('aria-label', nextEpisode ? 'Play next episode' : 'No next episode');
+    button.setAttribute('title', nextEpisode ? 'Play next episode' : 'No next episode');
+}
+
+function playNextEpisode() {
+    var nextEpisode = getNextEpisode();
+
+    if (!nextEpisode || !state.selectedItem) {
+        setPlayerStatus('No next episode');
+        setPlayerNextEpisodeUi();
+        return;
+    }
+
+    stopCurrentPlayback();
+    state.selectedSeason = getVideoSeason(nextEpisode);
+    state.selectedVideo = nextEpisode;
+    updateSelectedEpisodesForSeason();
+    state.streams = [];
+    state.currentStream = null;
+    state.autoplayPending = true;
+    renderAddons();
+    renderPlayerState();
+    setPlayerStatus('Loading next episode');
+    loadStreamsForSelection();
 }
 
 function setPlayerToggleUi(isPlaying) {
@@ -4292,7 +4401,10 @@ function buildSubtitleTrackLabel(track, addonName, index) {
     return normalized;
 }
 
-function normalizeAddonSubtitleTracks(addonName, baseUrl, subtitles) {
+function normalizeAddonSubtitleTracks(addonName, baseUrl, subtitles, idPrefix) {
+    var safeAddonName = addonName.replace(/[^a-z0-9]+/ig, '-').toLowerCase();
+    var safePrefix = String(idPrefix || 'result').replace(/[^a-z0-9]+/ig, '-').toLowerCase();
+
     return (subtitles || []).map(function(track, index) {
         var url = track && (track.url || track.src || track.file);
 
@@ -4304,12 +4416,12 @@ function normalizeAddonSubtitleTracks(addonName, baseUrl, subtitles) {
         }
 
         return {
-            id: 'subtitle-ext-addon-' + addonName.replace(/[^a-z0-9]+/ig, '-').toLowerCase() + '-' + index,
+            id: 'subtitle-ext-addon-' + safeAddonName + '-' + safePrefix + '-' + index,
             index: index,
             kind: 'external',
             url: resolveUrl(baseUrl, url),
             headers: getSubtitleRequestHeaders(null, track),
-            language: track.lang || track.language || '',
+            language: track.lang || track.language || track.languageCode || track.iso639_1 || track.iso639_2 || track.ISO639 || '',
             label: buildSubtitleTrackLabel(track, addonName, index)
         };
     }).filter(Boolean);
@@ -4351,43 +4463,57 @@ function fetchSubtitlesFromAddon(addon, type, videoId, streamEntry) {
     var addonName = addon.manifest && addon.manifest.name ? addon.manifest.name : 'Addon';
     var extraArgs = buildSubtitleExtraArgs(streamEntry);
     var idCandidates = buildSubtitleIdCandidates(type, videoId);
+    var requests = [];
 
     if (!baseUrl) {
         return Promise.resolve([]);
     }
 
-    function requestNext(index) {
-        var id = idCandidates[index];
-        var requestUrl;
-
-        if (!id) {
-            return Promise.resolve([]);
-        }
-
-        requestUrl = baseUrl
+    function buildSubtitleRequestUrl(id, args) {
+        return baseUrl
             + '/subtitles/'
             + encodeURIComponent(type)
             + '/'
             + encodeURIComponent(id)
-            + (extraArgs ? '/' + extraArgs : '')
+            + (args ? '/' + args : '')
             + '.json';
+    }
 
-        return requestJson(requestUrl, 'GET').then(function(payload) {
+    function queueRequest(id, args, key) {
+        var requestUrl;
+
+        if (!id) {
+            return;
+        }
+
+        requestUrl = buildSubtitleRequestUrl(id, args);
+        requests.push(requestJson(requestUrl, 'GET').then(function(payload) {
             var subtitles = payload && Array.isArray(payload.subtitles)
                 ? payload.subtitles
                 : (payload && Array.isArray(payload.subtitle) ? payload.subtitle : []);
 
-            if (!subtitles.length && index + 1 < idCandidates.length) {
-                return requestNext(index + 1);
-            }
-
-            return normalizeAddonSubtitleTracks(addonName, baseUrl, subtitles);
+            return normalizeAddonSubtitleTracks(addonName, baseUrl, subtitles, key);
         }).catch(function() {
-            return requestNext(index + 1);
-        });
+            return [];
+        }));
     }
 
-    return requestNext(0);
+    idCandidates.forEach(function(id, index) {
+        if (extraArgs) {
+            queueRequest(id, extraArgs, 'stream-' + index);
+        }
+        queueRequest(id, '', 'id-' + index);
+    });
+
+    return Promise.all(requests).then(function(groups) {
+        var tracks = [];
+
+        groups.forEach(function(group) {
+            tracks = tracks.concat(group);
+        });
+
+        return dedupeSubtitleTracks(tracks);
+    });
 }
 
 function refreshSubtitleAddonsForCurrentStream() {
@@ -4572,7 +4698,7 @@ function renderAddons() {
     var detailPlayButton = byId('detailPlayButton');
     var detailEpisodesButton = byId('detailEpisodesButton');
 
-    byId('addonCount').textContent = String(state.addons.length);
+    //byId('addonCount').textContent = String(state.addons.length);
     byId('streamCount').textContent = String(state.streams.length);
 
     if (!state.selectedItem) {
@@ -4663,6 +4789,7 @@ function renderPlayerState() {
     var empty = byId('videoEmpty');
     var stream = state.currentStream;
     setPlayerToggleUi(false);
+    setPlayerNextEpisodeUi();
 
     if (!stream) {
         resetTrackState();
@@ -4676,6 +4803,7 @@ function renderPlayerState() {
             'This player page is for direct stream URLs. Some addon entries may still require a proxy or native playback layer.';
         clearPlaybackSurface();
         renderTrackSelectors();
+        setPlayerNextEpisodeUi();
         return;
     }
 
@@ -4692,12 +4820,14 @@ function renderPlayerState() {
         clearPlaybackSurface();
         setPlayerStatus(stream.status);
         renderTrackSelectors();
+        setPlayerNextEpisodeUi();
         return;
     }
 
     empty.classList.add('is-hidden');
     video.classList.remove('is-hidden');
     renderTrackSelectors();
+    setPlayerNextEpisodeUi();
 }
 
 function startHtml5Stream(url) {
@@ -5605,12 +5735,8 @@ function bindPlayer() {
         cycleSubtitleTrack();
     });
 
-    byId('playerReloadButton').addEventListener('click', function() {
-        if (!state.currentStream || !state.currentStream.playable || !state.currentStream.raw || !state.currentStream.raw.url) {
-            setPlayerStatus('No playable stream selected');
-            return;
-        }
-        loadCurrentStream();
+    byId('playerNextEpisodeButton').addEventListener('click', function() {
+        playNextEpisode();
     });
 
     byId('playerFullscreenButton').addEventListener('click', function() {
