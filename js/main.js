@@ -15,6 +15,8 @@ var FEATURED_ROTATION_MS = 9000;
 var FEATURED_FADE_MS = 180;
 var HOME_ARTWORK_PRELOAD_COUNT = 8;
 var ARTWORK_PRELOAD_LIMIT = 48;
+var BROWSE_ROW_SIZE = 5;
+var BROWSE_PAGE_SIZE = 25;
 var PLAYER_SCRUB_INITIAL_NUDGE_MS = 5000;
 var PLAYER_SCRUB_TICK_MS = 50;
 var artworkPreloadCache = {};
@@ -2988,6 +2990,13 @@ function uniqueCatalogItems(items, limit) {
     return output;
 }
 
+function trimToFullBrowseRows(items) {
+    var list = items || [];
+    var fullLength = list.length - (list.length % BROWSE_ROW_SIZE);
+
+    return list.slice(0, fullLength);
+}
+
 function canonicalizeAddonUrl(url) {
     var value = String(url || '').trim().replace(/\/+$/, '');
 
@@ -3675,8 +3684,8 @@ function renderBrowseGenreRows() {
 }
 
 function renderBrowseViews() {
-    renderCardRows('movieGrid', state.movieBrowseItems, 'movie', 5);
-    renderCardRows('seriesGrid', state.seriesBrowseItems, 'series', 5);
+    renderCardRows('movieGrid', state.movieBrowseItems, 'movie', BROWSE_ROW_SIZE);
+    renderCardRows('seriesGrid', state.seriesBrowseItems, 'series', BROWSE_ROW_SIZE);
 
     byId('movieCount').textContent = state.movieBrowseItems.length + ' loaded • ' + getSelectedBrowseLabel('movie');
     byId('seriesCount').textContent = state.seriesBrowseItems.length + ' loaded • ' + getSelectedBrowseLabel('series');
@@ -3705,11 +3714,11 @@ function fetchBrowseCatalog(type, append) {
     updateConnectionStatus('Loading ' + type + ' browse...', false, false);
 
     return requestJson(buildCatalogRequestUrl(option, skip), 'GET').then(function(payload) {
-        var items = uniqueCatalogItems(normalizeCatalogPayloadWithLimit(payload, 24), 24);
+        var items = uniqueCatalogItems(normalizeCatalogPayloadWithLimit(payload, BROWSE_PAGE_SIZE), BROWSE_PAGE_SIZE);
         if (type === 'movie') {
-            state.movieBrowseItems = append ? state.movieBrowseItems.concat(items) : items;
+            state.movieBrowseItems = trimToFullBrowseRows(append ? state.movieBrowseItems.concat(items) : items);
         } else {
-            state.seriesBrowseItems = append ? state.seriesBrowseItems.concat(items) : items;
+            state.seriesBrowseItems = trimToFullBrowseRows(append ? state.seriesBrowseItems.concat(items) : items);
         }
         renderBrowseViews();
         updateConnectionStatus('Addon catalogs ready', true, false);
@@ -3741,8 +3750,8 @@ function fetchCatalogs() {
         return Promise.all([movieRequest, seriesRequest]).then(function(results) {
             state.movies = uniqueCatalogItems(normalizeCatalogPayload(results[0]), 12);
             state.series = uniqueCatalogItems(normalizeCatalogPayload(results[1]), 12);
-            state.movieBrowseItems = uniqueCatalogItems(normalizeCatalogPayloadWithLimit(results[0], 24), 24);
-            state.seriesBrowseItems = uniqueCatalogItems(normalizeCatalogPayloadWithLimit(results[1], 24), 24);
+            state.movieBrowseItems = trimToFullBrowseRows(uniqueCatalogItems(normalizeCatalogPayloadWithLimit(results[0], BROWSE_PAGE_SIZE), BROWSE_PAGE_SIZE));
+            state.seriesBrowseItems = trimToFullBrowseRows(uniqueCatalogItems(normalizeCatalogPayloadWithLimit(results[1], BROWSE_PAGE_SIZE), BROWSE_PAGE_SIZE));
             renderCatalogViews();
             renderBrowseViews();
 
@@ -5743,12 +5752,12 @@ function bindSearch() {
 
 function bindBrowse() {
     byId('movieLoadMoreButton').addEventListener('click', function() {
-        state.movieSkip += 24;
+        state.movieSkip += BROWSE_PAGE_SIZE;
         fetchBrowseCatalog('movie', true);
     });
 
     byId('seriesLoadMoreButton').addEventListener('click', function() {
-        state.seriesSkip += 24;
+        state.seriesSkip += BROWSE_PAGE_SIZE;
         fetchBrowseCatalog('series', true);
     });
 }

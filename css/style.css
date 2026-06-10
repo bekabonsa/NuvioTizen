@@ -710,7 +710,7 @@ body[data-current-view="player"] .content-row.is-row-far {
 
 #movieGrid .card-row,
 #seriesGrid .card-row {
-    gap: 26px;
+    gap: 0;
     justify-content: center;
 }
 
@@ -719,6 +719,8 @@ body[data-current-view="player"] .content-row.is-row-far {
     flex-basis: calc((100% - 130px) / 6);
     min-width: calc((100% - 130px) / 6);
     max-width: calc((100% - 130px) / 6);
+    margin-left: 16px;
+    margin-right: 16px;
 }
 
 .poster {
