@@ -152,6 +152,11 @@ var state = {
         continue: 0,
         movies: 0,
         series: 0
+    },
+    homeRailMoveDirections: {
+        continue: null,
+        movies: null,
+        series: null
     }
 };
 
@@ -3670,8 +3675,8 @@ function renderBrowseGenreRows() {
 }
 
 function renderBrowseViews() {
-    renderCardRows('movieGrid', state.movieBrowseItems, 'movie', 4);
-    renderCardRows('seriesGrid', state.seriesBrowseItems, 'series', 4);
+    renderCardRows('movieGrid', state.movieBrowseItems, 'movie', 6);
+    renderCardRows('seriesGrid', state.seriesBrowseItems, 'series', 6);
 
     byId('movieCount').textContent = state.movieBrowseItems.length + ' loaded • ' + getSelectedBrowseLabel('movie');
     byId('seriesCount').textContent = state.seriesBrowseItems.length + ' loaded • ' + getSelectedBrowseLabel('series');
@@ -5409,13 +5414,15 @@ function renderCards(containerId, items, kind) {
 function renderHomeRailWindow(containerId, entries, key) {
     var container = byId(containerId);
     var index;
+    var moveDirection = state.homeRailMoveDirections[key];
     var previousEntry;
     var shouldShowPeek;
     var visible;
 
     container.innerHTML = '';
     container.classList.add('rail-home-window');
-    container.classList.remove('has-home-peek');
+    container.classList.remove('has-home-peek', 'is-moving-left', 'is-moving-right');
+    state.homeRailMoveDirections[key] = null;
 
     if (!entries.length) {
         state.homeRailIndices[key] = 0;
@@ -5434,6 +5441,9 @@ function renderHomeRailWindow(containerId, entries, key) {
     shouldShowPeek = (key === 'movies' || key === 'series') && index > 0 && entries.length > 1;
     if (shouldShowPeek) {
         container.classList.add('has-home-peek');
+    }
+    if (moveDirection === 'left' || moveDirection === 'right') {
+        container.classList.add('is-moving-' + moveDirection);
     }
 
     if (shouldShowPeek) {
@@ -5880,6 +5890,7 @@ function handleLeft() {
         if (homeRailLeft) {
             if (state.homeRailIndices[homeRailLeft.key] > 0) {
                 state.homeRailIndices[homeRailLeft.key] -= 1;
+                state.homeRailMoveDirections[homeRailLeft.key] = 'right';
                 state.mainCol = 0;
                 renderSingleHomeRail(homeRailLeft);
                 focusCurrent();
@@ -5945,6 +5956,7 @@ function handleRight() {
         var homeRailRight = getHomeRailDescriptorForMainRow(state.mainRow);
         if (homeRailRight) {
             state.homeRailIndices[homeRailRight.key] = (state.homeRailIndices[homeRailRight.key] + 1) % homeRailRight.entries.length;
+            state.homeRailMoveDirections[homeRailRight.key] = 'left';
             state.mainCol = 0;
             renderSingleHomeRail(homeRailRight);
             focusCurrent();
