@@ -2184,8 +2184,12 @@ function getMainRows() {
         var homeRows = [];
         var actions = queryAll('#homeActions .action-button');
         var continueCards = queryAll('#continueRail .card');
-        var movieCards = queryAll('#homeMovieRail .card');
-        var seriesCards = queryAll('#homeSeriesRail .card');
+        var movieCards = queryAll('#homeMovieRail .card').filter(function(card) {
+            return !card.classList.contains('is-home-peek');
+        });
+        var seriesCards = queryAll('#homeSeriesRail .card').filter(function(card) {
+            return !card.classList.contains('is-home-peek');
+        });
 
         if (actions.length) {
             homeRows.push(actions);
@@ -5383,9 +5387,13 @@ function createCard(item, kind) {
     card.appendChild(meta);
     card.appendChild(synopsis);
 
-    card.addEventListener('click', function() {
-        prepareSelection(item, kind);
-    });
+    if (options.inert) {
+        card.setAttribute('aria-hidden', 'true');
+    } else {
+        card.addEventListener('click', function() {
+            prepareSelection(item, kind);
+        });
+    }
 
     return card;
 }
@@ -5401,10 +5409,13 @@ function renderCards(containerId, items, kind) {
 function renderHomeRailWindow(containerId, entries, key) {
     var container = byId(containerId);
     var index;
+    var previousEntry;
+    var shouldShowPeek;
     var visible;
 
     container.innerHTML = '';
     container.classList.add('rail-home-window');
+    container.classList.remove('has-home-peek');
 
     if (!entries.length) {
         state.homeRailIndices[key] = 0;
@@ -5419,6 +5430,20 @@ function renderHomeRailWindow(containerId, entries, key) {
         index = 0;
     }
     state.homeRailIndices[key] = index;
+
+    shouldShowPeek = (key === 'movies' || key === 'series') && index > 0 && entries.length > 1;
+    if (shouldShowPeek) {
+        container.classList.add('has-home-peek');
+    }
+
+    if (shouldShowPeek) {
+        previousEntry = entries[index - 1];
+        container.appendChild(createCard(previousEntry.item, previousEntry.kind, {
+            className: 'is-home-peek',
+            imageUrl: previousEntry.item.poster,
+            inert: true
+        }));
+    }
 
     visible = getCircularHomeWindow(entries, index, 4);
     warmHomeRailArtwork(entries, index, HOME_ARTWORK_PRELOAD_COUNT);
