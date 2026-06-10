@@ -5304,6 +5304,7 @@ function createCard(item, kind) {
     var title = document.createElement('div');
     var meta = document.createElement('div');
     var synopsis = document.createElement('div');
+    var imageUrl = options.imageUrl || item.poster;
 
     card.className = 'card';
     if (options.className) {
@@ -5313,9 +5314,9 @@ function createCard(item, kind) {
     card.setAttribute('tabindex', '-1');
 
     poster.className = 'poster';
-    if (item.poster) {
+    if (imageUrl) {
         var img = document.createElement('img');
-        img.src = item.poster;
+        img.src = imageUrl;
         img.alt = item.name || 'Poster';
         poster.appendChild(img);
     } else {
@@ -5382,6 +5383,7 @@ function renderHomeRailWindow(containerId, entries, key) {
     visible.forEach(function(entry, visibleIndex) {
         container.appendChild(createCard(entry.item, entry.kind, {
             className: visibleIndex === 0 ? 'is-home-active' : 'is-home-compact',
+            imageUrl: visibleIndex === 0 ? (entry.item.background || entry.item.poster) : entry.item.poster,
             metaText: entry.metaText,
             showSynopsis: visibleIndex === 0
         }));
