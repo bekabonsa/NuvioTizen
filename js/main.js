@@ -3716,9 +3716,13 @@ function fetchBrowseCatalog(type, append) {
     return requestJson(buildCatalogRequestUrl(option, skip), 'GET').then(function(payload) {
         var items = uniqueCatalogItems(normalizeCatalogPayloadWithLimit(payload, BROWSE_PAGE_SIZE), BROWSE_PAGE_SIZE);
         if (type === 'movie') {
-            state.movieBrowseItems = trimToFullBrowseRows(append ? state.movieBrowseItems.concat(items) : items);
+            state.movieBrowseItems = trimToFullBrowseRows(
+                append ? uniqueCatalogItems(state.movieBrowseItems.concat(items)) : items
+            );
         } else {
-            state.seriesBrowseItems = trimToFullBrowseRows(append ? state.seriesBrowseItems.concat(items) : items);
+            state.seriesBrowseItems = trimToFullBrowseRows(
+                append ? uniqueCatalogItems(state.seriesBrowseItems.concat(items)) : items
+            );
         }
         renderBrowseViews();
         updateConnectionStatus('Addon catalogs ready', true, false);
