@@ -1438,8 +1438,8 @@ input:focus {
 }
 
 .rail-home-window .card.is-home-active {
-    flex-basis: 39%;
-    width: 39%;
+    flex-basis: 50%;
+    width: 50%;
     min-width: 0;
 }
 
