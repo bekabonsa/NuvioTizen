@@ -3675,8 +3675,8 @@ function renderBrowseGenreRows() {
 }
 
 function renderBrowseViews() {
-    renderCardRows('movieGrid', state.movieBrowseItems, 'movie', 6);
-    renderCardRows('seriesGrid', state.seriesBrowseItems, 'series', 6);
+    renderCardRows('movieGrid', state.movieBrowseItems, 'movie', 5);
+    renderCardRows('seriesGrid', state.seriesBrowseItems, 'series', 5);
 
     byId('movieCount').textContent = state.movieBrowseItems.length + ' loaded • ' + getSelectedBrowseLabel('movie');
     byId('seriesCount').textContent = state.seriesBrowseItems.length + ' loaded • ' + getSelectedBrowseLabel('series');

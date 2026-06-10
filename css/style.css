@@ -538,7 +538,6 @@ body[data-current-view="player"] .content-row.is-row-far {
 #homeMoviesSection,
 #homeSeriesSection {
     width: calc(100% + 60px);
-
     padding: 24px 0 34px;
     border: 0;
     border-radius: 0;
@@ -550,6 +549,35 @@ body[data-current-view="player"] .content-row.is-row-far {
 #homeMoviesSection .section-header,
 #homeSeriesSection .section-header {
     padding: 0 90px;
+}
+
+#movieGenreSection,
+#movieShelfSection,
+#movieLoadSection,
+#seriesGenreSection,
+#seriesShelfSection,
+#seriesLoadSection {
+    width: calc(100% + 60px);
+    padding: 24px 0 34px;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    overflow: visible;
+}
+
+#movieGenreSection .section-header,
+#movieShelfSection .section-header,
+#seriesGenreSection .section-header,
+#seriesShelfSection .section-header,
+#movieGenreSection .section-copy,
+#seriesGenreSection .section-copy,
+#movieGenreRow,
+#seriesGenreRow,
+#movieLoadSection .action-row,
+#seriesLoadSection .action-row {
+    padding-left: 14px;
+    padding-right: 74px;
 }
 
 .browse-shelf-hero {
@@ -680,11 +708,17 @@ body[data-current-view="player"] .content-row.is-row-far {
     max-width: calc((100% - 54px) / 4);
 }
 
+#movieGrid .card-row,
+#seriesGrid .card-row {
+    gap: 26px;
+    justify-content: center;
+}
+
 #movieGrid .card-row .card,
 #seriesGrid .card-row .card {
-    flex-basis: calc((100% - 90px) / 6);
-    min-width: calc((100% - 90px) / 6);
-    max-width: calc((100% - 90px) / 6);
+    flex-basis: calc((100% - 130px) / 6);
+    min-width: calc((100% - 130px) / 6);
+    max-width: calc((100% - 130px) / 6);
 }
 
 .poster {
