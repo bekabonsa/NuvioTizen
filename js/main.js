@@ -13,8 +13,12 @@ var FALLBACK_SERIES_GENRES = ['Top', 'Drama', 'Comedy', 'Crime', 'Sci-Fi', 'Anim
 var NAV_VIEWS = ['search', 'home', 'series', 'movies', 'login'];
 var FEATURED_ROTATION_MS = 9000;
 var FEATURED_FADE_MS = 180;
+var HOME_ARTWORK_PRELOAD_COUNT = 8;
+var ARTWORK_PRELOAD_LIMIT = 48;
 var PLAYER_SCRUB_INITIAL_NUDGE_MS = 5000;
 var PLAYER_SCRUB_TICK_MS = 50;
+var artworkPreloadCache = {};
+var artworkPreloadOrder = [];
 var SEARCH_KEYBOARD_ROWS = [
     ['a', 'b', 'c', 'd', 'e', 'f'],
     ['g', 'h', 'i', 'j', 'k', 'l'],
@@ -217,6 +221,40 @@ function preloadFeaturedArtwork(url) {
                 finish(new Error('Failed to preload featured artwork.'));
             }
         }
+    });
+}
+
+function rememberPreloadedArtwork(src, promise) {
+    artworkPreloadCache[src] = promise;
+    artworkPreloadOrder.push(src);
+
+    while (artworkPreloadOrder.length > ARTWORK_PRELOAD_LIMIT) {
+        delete artworkPreloadCache[artworkPreloadOrder.shift()];
+    }
+}
+
+function warmArtworkUrl(url) {
+    var src = String(url || '').trim();
+
+    if (!src || artworkPreloadCache[src]) {
+        return;
+    }
+
+    rememberPreloadedArtwork(src, preloadFeaturedArtwork(src).catch(function() {
+        return null;
+    }));
+}
+
+function getHomeRailArtworkUrl(entry) {
+    if (!entry || !entry.item) {
+        return '';
+    }
+    return entry.item.background || entry.item.poster || '';
+}
+
+function warmHomeRailArtwork(entries, startIndex, count) {
+    getCircularHomeWindow(entries, startIndex, count).forEach(function(entry) {
+        warmArtworkUrl(getHomeRailArtworkUrl(entry));
     });
 }
 
@@ -5316,6 +5354,10 @@ function createCard(item, kind) {
     poster.className = 'poster';
     if (imageUrl) {
         var img = document.createElement('img');
+        img.decoding = 'async';
+        if (options.eagerImage) {
+            img.loading = 'eager';
+        }
         img.src = imageUrl;
         img.alt = item.name || 'Poster';
         poster.appendChild(img);
@@ -5379,12 +5421,14 @@ function renderHomeRailWindow(containerId, entries, key) {
     state.homeRailIndices[key] = index;
 
     visible = getCircularHomeWindow(entries, index, 4);
+    warmHomeRailArtwork(entries, index, HOME_ARTWORK_PRELOAD_COUNT);
 
     visible.forEach(function(entry, visibleIndex) {
         container.appendChild(createCard(entry.item, entry.kind, {
             className: visibleIndex === 0 ? 'is-home-active' : 'is-home-compact',
             imageUrl: visibleIndex === 0 ? (entry.item.background || entry.item.poster) : entry.item.poster,
             metaText: entry.metaText,
+            eagerImage: visibleIndex === 0,
             showSynopsis: visibleIndex === 0
         }));
     });
