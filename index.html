@@ -283,24 +283,26 @@
                         </div>
                     </section>
 
-                    <section class="browse-shelf content-row" id="seasonSection">
-                        <div class="section-header">
-                            <div>
-                                <span class="section-kicker">Seasons</span>
-                                <h2>Choose a season</h2>
-                            </div>
-                        </div>
-                        <div class="season-rail" id="seasonRail"></div>
-                    </section>
-
-                    <section class="browse-shelf content-row" id="episodeSection">
+                    <section class="browse-shelf content-row episode-browser-section" id="episodeSection">
                         <div class="section-header">
                             <div>
                                 <span class="section-kicker">Episodes</span>
-                                <h2>Choose an episode</h2>
+                                <h2 id="episodeBrowserTitle">Choose an episode</h2>
+                            </div>
+                            <span class="section-count" id="episodeBrowserCount">0 episodes</span>
+                        </div>
+                        <div class="episode-browser">
+                            <div class="episode-season-panel" id="seasonSection">
+                                <div class="episode-show-summary">
+                                    <h3 id="episodeShowTitle">Series</h3>
+                                    <p id="episodeShowMeta">Choose a season</p>
+                                </div>
+                                <div class="season-rail" id="seasonRail"></div>
+                            </div>
+                            <div class="episode-list-panel">
+                                <div class="episode-rail" id="episodeRail"></div>
                             </div>
                         </div>
-                        <div class="episode-rail" id="episodeRail"></div>
                     </section>
 
                     <section class="browse-shelf content-row" id="streamSection">
