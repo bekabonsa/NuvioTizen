@@ -33,6 +33,9 @@
                 <button class="nav-item is-active" type="button" data-view="home">
                     <span class="nav-label">Home</span>
                 </button>
+                <button class="nav-item" type="button" data-view="library">
+                    <span class="nav-label">Library</span>
+                </button>
                 <button class="nav-item" type="button" data-view="series">
                     <span class="nav-label">Series</span>
                 </button>
@@ -113,6 +116,20 @@
                             <span class="section-count" id="homeSeriesCount">0 loaded</span>
                         </div>
                         <div class="rail" id="homeSeriesRail"></div>
+                    </section>
+                </section>
+
+                <section class="view view-library" data-view-panel="library">
+                    <section class="browse-shelf browse-shelf-hero content-row" id="libraryShelfSection">
+                        <div class="section-header">
+                            <div>
+                                <span class="section-kicker">Saved</span>
+                                <h2>Library</h2>
+                            </div>
+                            <span class="section-count" id="libraryCount">Nothing saved yet</span>
+                        </div>
+                        <p class="section-copy" id="libraryEmptyState">Add films and series from their detail pages to keep them here.</p>
+                        <div class="card-row-stack library-grid" id="libraryGrid"></div>
                     </section>
                 </section>
 
@@ -250,6 +267,17 @@
                                 <button class="action-button action-primary" id="detailPlayButton" type="button">Play</button>
                                 <button class="action-button" id="detailEpisodesButton" type="button">Episodes</button>
                                 <button class="action-button" id="detailSourcesButton" type="button">Sources</button>
+                                <button class="action-button detail-icon-button" id="detailLibraryButton" type="button" aria-label="Add to library" title="Add this title to your library">
+                                    <svg class="detail-library-icon detail-library-icon-add" viewBox="0 0 24 24" aria-hidden="true">
+                                        <path d="M6 4.8C6 3.8 6.8 3 7.8 3h8.4c1 0 1.8.8 1.8 1.8V21l-6-3.4L6 21V4.8Z"></path>
+                                        <path d="M12 7.5v6"></path>
+                                        <path d="M9 10.5h6"></path>
+                                    </svg>
+                                    <svg class="detail-library-icon detail-library-icon-saved" viewBox="0 0 24 24" aria-hidden="true">
+                                        <path d="M6 4.8C6 3.8 6.8 3 7.8 3h8.4c1 0 1.8.8 1.8 1.8V21l-6-3.4L6 21V4.8Z"></path>
+                                        <path d="M9.2 11.4l1.9 1.9 4-4.2"></path>
+                                    </svg>
+                                </button>
                             </div>
                             <p class="helper" id="addonsMessage">Choose a title to inspect addon streams. Sign in with Nuvio to sync your full collection.</p>
                         </div>
@@ -287,14 +315,15 @@
                 </section>
 
                 <section class="view view-player" data-view-panel="player">
-                    <div class="player-layout">
-                        <section class="player-stage-card">
+                    <div class="player-layout" id="playerLayout">
+                        <section class="player-stage-card" id="playerStageCard">
                             <div class="video-frame" id="videoFrameFocus" tabindex="-1">
                                 <object id="avplaySurface" class="avplay-surface" type="application/avplayer"></object>
                                 <video id="videoPlayer" class="video-player" playsinline webkit-playsinline preload="auto"></video>
                                 <div class="video-empty" id="videoEmpty">
                                     Pick an addon stream to open the player.
                                 </div>
+                                <div class="player-control-title" id="playerControlTitle">No stream selected</div>
                                 <div class="player-subtitle-overlay is-hidden" id="playerSubtitleOverlay" aria-live="polite"></div>
                                 <div class="player-controller-card" id="playerControllerChrome">
                                     <div class="player-controller-backdrop"></div>

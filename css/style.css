@@ -709,7 +709,8 @@ body[data-current-view="player"] .content-row.is-row-far {
 }
 
 #movieGrid .card-row,
-#seriesGrid .card-row {
+#seriesGrid .card-row,
+#libraryGrid .card-row {
     gap: 0;
     justify-content: center;
 }
@@ -721,6 +722,18 @@ body[data-current-view="player"] .content-row.is-row-far {
     max-width: calc((100% - 130px) / 6);
     margin-left: 16px;
     margin-right: 16px;
+}
+
+#libraryGrid.card-row-stack {
+    padding-top: 18px;
+}
+
+#libraryGrid .card-row .card {
+    flex-basis: calc((100% - 150px) / 7);
+    min-width: calc((100% - 150px) / 7);
+    max-width: calc((100% - 150px) / 7);
+    margin-left: 15px;
+    margin-right: 15px;
 }
 
 .poster {
@@ -740,7 +753,8 @@ body[data-current-view="player"] .content-row.is-row-far {
 }
 
 #movieGrid .poster,
-#seriesGrid .poster {
+#seriesGrid .poster,
+#libraryGrid .poster {
     aspect-ratio: 2 / 3;
     height: auto;
 }
@@ -755,6 +769,14 @@ body[data-current-view="player"] .content-row.is-row-far {
     font-size: 14px;
 }
 
+#libraryGrid .card-title {
+    font-size: 16px;
+}
+
+#libraryGrid .card-meta {
+    font-size: 12px;
+}
+
 #movieGrid .card:focus,
 #movieGrid .card:hover,
 #seriesGrid .card:focus,
@@ -764,8 +786,16 @@ body[data-current-view="player"] .content-row.is-row-far {
     box-shadow: 0 24px 42px rgba(0, 0, 0, 0.36);
 }
 
+#libraryGrid .card:focus,
+#libraryGrid .card:hover {
+    z-index: 18;
+    transform: translate3d(0, -16px, 0) scale(1.2);
+    box-shadow: 0 22px 38px rgba(0, 0, 0, 0.34);
+}
+
 #movieGrid .poster img,
-#seriesGrid .poster img {
+#seriesGrid .poster img,
+#libraryGrid .poster img {
     transform: scale(1.12);
     transform-origin: center center;
     transition: transform 170ms cubic-bezier(0.22, 0.61, 0.36, 1);
@@ -774,7 +804,9 @@ body[data-current-view="player"] .content-row.is-row-far {
 #movieGrid .card:focus .poster img,
 #movieGrid .card:hover .poster img,
 #seriesGrid .card:focus .poster img,
-#seriesGrid .card:hover .poster img {
+#seriesGrid .card:hover .poster img,
+#libraryGrid .card:focus .poster img,
+#libraryGrid .card:hover .poster img {
     transform: scale(1);
 }
 
@@ -814,6 +846,14 @@ body[data-current-view="player"] .content-row.is-row-far {
     opacity: 0;
     padding-right: 6px;
     transition: none;
+}
+
+#libraryEmptyState {
+    display: none;
+}
+
+#libraryEmptyState.is-visible {
+    display: block;
 }
 
 /*
@@ -869,6 +909,36 @@ body[data-current-view="player"] .content-row.is-row-far {
 
 .detail-actions {
     margin-top: 24px;
+}
+
+.detail-icon-button {
+    width: 58px;
+    min-width: 58px;
+    height: 58px;
+    min-height: 58px;
+    padding: 0;
+}
+
+.detail-library-icon {
+    width: 27px;
+    height: 27px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.detail-library-icon-saved {
+    display: none;
+}
+
+#detailLibraryButton.is-saved .detail-library-icon-add {
+    display: none;
+}
+
+#detailLibraryButton.is-saved .detail-library-icon-saved {
+    display: block;
 }
 
 .info-grid {
@@ -1136,22 +1206,30 @@ body[data-current-view="player"] .content-row.is-row-far {
 }
 
 .player-layout {
-    display: grid;
-    grid-template-columns: minmax(0, 2.18fr) minmax(320px, 380px);
-    gap: 18px;
-    align-items: start;
+    display: block;
 }
 
 .player-stage-card {
     padding: 20px;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    overflow: visible;
+}
+
+.player-side-card {
+    width: auto;
+    margin-left: 0;
+    margin-top: 18px;
 }
 
 .video-frame {
     position: relative;
     height: 712px;
     min-height: 712px;
-    border-radius: 24px;
-    overflow: hidden;
+    border-radius: 0;
+    overflow: visible;
     border: 1px solid rgba(255, 255, 255, 0.07);
     background: #000;
 }
@@ -1173,8 +1251,7 @@ body.is-player-fullscreen .player-layout {
 }
 
 body.is-player-fullscreen .player-layout {
-    grid-template-columns: 1fr;
-    gap: 0;
+    display: block;
 }
 
 body.is-player-fullscreen .player-stage-card {
@@ -1195,10 +1272,17 @@ body.is-player-fullscreen .video-frame {
 .avplay-surface,
 .video-player {
     position: absolute;
-    inset: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
     width: 100%;
     height: 100%;
     background: #000;
+}
+
+.video-player {
+    object-fit: contain;
 }
 
 .avplay-surface.is-active {
@@ -1304,6 +1388,34 @@ body.is-player-fullscreen.is-player-chrome-visible .player-controller-card {
     opacity: 1;
     transform: translateY(0);
     pointer-events: auto;
+}
+
+.player-control-title {
+    position: absolute;
+    left: 32px;
+    top: 28px;
+    z-index: 4;
+    max-width: calc(100% - 64px);
+    color: #ffffff;
+    font-size: 36px;
+    font-weight: 900;
+    line-height: 1.08;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    text-align: left;
+    text-shadow: 0 3px 18px rgba(0, 0, 0, 0.82);
+    pointer-events: none;
+    opacity: 1;
+    transition: opacity 160ms ease;
+}
+
+body.is-player-fullscreen .player-control-title {
+    opacity: 0;
+}
+
+body.is-player-fullscreen.is-player-chrome-visible .player-control-title {
+    opacity: 1;
 }
 
 .player-progress-meta {
