@@ -112,6 +112,7 @@ var state = {
     selectedSeason: null,
     selectedEpisodes: [],
     selectedVideo: null,
+    detailMode: 'details',
     streams: [],
     currentStream: null,
     audioTracks: [],
@@ -351,6 +352,27 @@ function warmHomeRailArtwork(entries, startIndex, count) {
     getCircularHomeWindow(entries, startIndex, count).forEach(function(entry) {
         warmArtworkUrl(getHomeRailArtworkUrl(entry));
     });
+}
+
+function warmEpisodeArtwork(videos, startIndex, count) {
+    var items = videos || [];
+    var safeStart = Math.max(startIndex || 0, 0);
+    var safeCount = Math.max(count || 0, 0);
+    var index;
+
+    for (index = safeStart; index < Math.min(items.length, safeStart + safeCount); index += 1) {
+        warmArtworkUrl(getVideoThumbnail(items[index]));
+    }
+}
+
+function isVisibleControl(element) {
+    return !!(
+        element
+        && !element.disabled
+        && element.style.display !== 'none'
+        && element.getClientRects
+        && element.getClientRects().length
+    );
 }
 
 function updateConnectionStatus(text, ok, isError) {
@@ -2379,10 +2401,12 @@ function getMainRowContainers() {
         for (episodeRowIndex = 0; episodeRowIndex < episodeBrowserRows; episodeRowIndex += 1) {
             addonContainers.push(byId('episodeSection'));
         }
-        queryAll('#streamList .stream-card').forEach(function() {
+        queryAll('#streamList .stream-card').filter(isVisibleControl).forEach(function() {
             addonContainers.push(byId('streamSection'));
         });
-        return addonContainers.filter(Boolean);
+        return addonContainers.filter(function(el) {
+            return el && el.style.display !== 'none';
+        });
     }
 
     if (state.currentView === 'player') {
@@ -2532,10 +2556,10 @@ function getMainRows() {
 
     if (state.currentView === 'addons') {
         var addonRows = [];
-        var detailActions = queryAll('#detailActions .action-button');
-        var seasons = queryAll('#seasonRail .season-chip');
-        var episodes = queryAll('#episodeRail .episode-card');
-        var streams = queryAll('#streamList .stream-card');
+        var detailActions = queryAll('#detailActions .action-button').filter(isVisibleControl);
+        var seasons = queryAll('#seasonRail .season-chip').filter(isVisibleControl);
+        var episodes = queryAll('#episodeRail .episode-card').filter(isVisibleControl);
+        var streams = queryAll('#streamList .stream-card').filter(isVisibleControl);
         var browserRowCount = Math.max(seasons.length, episodes.length);
         var browserRowIndex;
 
@@ -2895,6 +2919,26 @@ function goBackOnce() {
 
     if (state.playerFullscreen) {
         setPlayerFullscreen(false);
+        return;
+    }
+
+    if (state.currentView === 'addons' && state.selectedType === 'series' && state.detailMode === 'sources') {
+        state.detailMode = 'episodes';
+        renderAddons();
+        state.focusRegion = 'main';
+        state.mainRow = getSelectedEpisodeMainRow();
+        state.mainCol = state.availableSeasons.length && state.selectedEpisodes.length ? 1 : 0;
+        focusCurrent();
+        return;
+    }
+
+    if (state.currentView === 'addons' && state.selectedType === 'series' && state.detailMode === 'episodes') {
+        state.detailMode = 'details';
+        renderAddons();
+        state.focusRegion = 'main';
+        state.mainRow = 0;
+        state.mainCol = 0;
+        focusCurrent();
         return;
     }
 
@@ -5260,11 +5304,58 @@ function getSeasonEpisodeCount(season) {
 }
 
 function getEpisodeBrowserRowCount() {
-    if (state.selectedType !== 'series') {
+    if (state.selectedType !== 'series' || state.detailMode !== 'episodes') {
         return 0;
     }
 
     return Math.max(state.availableSeasons.length, state.selectedEpisodes.length);
+}
+
+function getVisibleDetailActionRowCount() {
+    return queryAll('#detailActions .action-button').some(function(button) {
+        return isVisibleControl(button);
+    }) ? 1 : 0;
+}
+
+function getFirstStreamMainRow() {
+    return getVisibleDetailActionRowCount() + getEpisodeBrowserRowCount();
+}
+
+function getSelectedEpisodeMainRow() {
+    var episodeIndex = 0;
+
+    if (state.selectedVideo && state.selectedVideo.id) {
+        state.selectedEpisodes.some(function(video, index) {
+            if (video && video.id === state.selectedVideo.id) {
+                episodeIndex = index;
+                return true;
+            }
+            return false;
+        });
+    }
+
+    return getVisibleDetailActionRowCount() + episodeIndex;
+}
+
+function applyDetailMode() {
+    var hasSelection = !!state.selectedItem;
+    var isSeries = state.selectedType === 'series';
+    var showDetails = !hasSelection || !isSeries || state.detailMode === 'details';
+    var showEpisodes = hasSelection && isSeries && state.detailMode === 'episodes';
+    var showStreams = hasSelection && (!isSeries || state.detailMode === 'sources');
+    var detailHero = byId('detailHeroRow');
+    var episodeSection = byId('episodeSection');
+    var streamSection = byId('streamSection');
+
+    if (detailHero) {
+        detailHero.style.display = showDetails ? '' : 'none';
+    }
+    if (episodeSection) {
+        episodeSection.style.display = showEpisodes && state.selectedEpisodes.length ? '' : 'none';
+    }
+    if (streamSection) {
+        streamSection.style.display = showStreams ? '' : 'none';
+    }
 }
 
 function getVideoTitle(video) {
@@ -5329,8 +5420,9 @@ function renderEpisodeRail() {
     section.style.display = 'block';
     byId('episodeBrowserTitle').textContent = formatSeasonLabel(state.selectedSeason);
     byId('episodeBrowserCount').textContent = state.selectedEpisodes.length + ' episode' + (state.selectedEpisodes.length === 1 ? '' : 's');
+    warmEpisodeArtwork(state.selectedEpisodes, 0, 8);
 
-    state.selectedEpisodes.forEach(function(video) {
+    state.selectedEpisodes.forEach(function(video, index) {
         var button = document.createElement('button');
         var thumb = document.createElement('div');
         var thumbImg = document.createElement('img');
@@ -5350,8 +5442,23 @@ function renderEpisodeRail() {
 
         thumb.className = 'episode-thumb';
         if (imageUrl) {
+            thumb.classList.add('is-loading');
+            thumbImg.decoding = 'async';
+            thumbImg.loading = index < 5 ? 'eager' : 'lazy';
+            thumbImg.onload = function() {
+                thumb.classList.remove('is-loading');
+                thumb.classList.add('is-loaded');
+            };
+            thumbImg.onerror = function() {
+                thumb.classList.remove('is-loading');
+                thumb.classList.add('is-empty');
+            };
             thumbImg.src = imageUrl;
             thumbImg.alt = getVideoTitle(video);
+            if (thumbImg.complete && (thumbImg.naturalWidth || thumbImg.naturalHeight)) {
+                thumb.classList.remove('is-loading');
+                thumb.classList.add('is-loaded');
+            }
             thumb.appendChild(thumbImg);
         } else {
             thumb.classList.add('is-empty');
@@ -5380,8 +5487,14 @@ function renderEpisodeRail() {
         button.addEventListener('click', function() {
             state.selectedVideo = video;
             state.selectedSeason = getVideoSeason(video);
-            renderEpisodeRail();
-            loadStreamsForSelection();
+            state.detailMode = 'sources';
+            state.streams = [];
+            renderEpisodeBrowserForMode();
+            renderStreamList();
+            applyDetailMode();
+            loadStreamsForSelection({
+                focusStreams: true
+            });
         });
         rail.appendChild(button);
     });
@@ -5427,71 +5540,26 @@ function renderSeasonRail() {
             }
             state.selectedSeason = season;
             updateSelectedEpisodesForSeason();
+            state.streams = [];
+            state.detailMode = 'episodes';
             renderAddons();
             if (!state.selectedVideo) {
                 setAddonsMessage('No episodes were returned for this season.', 'error');
                 return;
             }
-            loadStreamsForSelection();
         });
         rail.appendChild(button);
     });
 }
 
-function renderAddons() {
-    var detailArtwork = byId('detailArtwork');
-    var selectedTypeSummary = byId('selectedTypeSummary');
-    var detailPlayButton = byId('detailPlayButton');
-    var detailEpisodesButton = byId('detailEpisodesButton');
-
-    //byId('addonCount').textContent = String(state.addons.length);
-    byId('streamCount').textContent = String(state.streams.length);
-
-    if (!state.selectedItem) {
-        byId('selectedTitle').textContent = 'Nothing selected';
-        byId('selectedTypeLabel').textContent = 'Choose a title';
-        byId('selectedDescription').textContent = 'Pick a movie or show from the catalog pages to inspect addon streams here.';
-        byId('selectedVideoLabel').textContent = 'No episode selected';
-        selectedTypeSummary.textContent = 'Choose a title';
-        detailPlayButton.textContent = 'Play';
-        detailEpisodesButton.textContent = 'Episodes';
-        detailEpisodesButton.style.display = 'none';
-        detailEpisodesButton.disabled = true;
-        detailEpisodesButton.setAttribute('aria-hidden', 'true');
-        detailArtwork.style.backgroundImage = 'linear-gradient(180deg, rgba(9, 11, 17, 0.18), rgba(9, 11, 17, 0.42)), #0b0d14';
-    } else {
-        byId('selectedTitle').textContent = state.selectedItem.name || 'Untitled';
-        byId('selectedTypeLabel').textContent = state.selectedType === 'series' ? 'Series' : 'Movie';
-        byId('selectedDescription').textContent =
-            state.selectedItem.description ||
-            state.selectedItem.releaseInfo ||
-            'Installed addons and streams for the current selection appear below.';
-        byId('selectedVideoLabel').textContent = state.selectedVideo
-            ? (state.selectedType === 'series'
-                ? (formatSeasonLabel(getVideoSeason(state.selectedVideo)) + ' • Episode ' + (getVideoEpisode(state.selectedVideo) || '?'))
-                : (state.selectedVideo.title || state.selectedVideo.name || state.selectedVideo.id))
-            : (state.selectedType === 'series' ? 'Choose an episode' : 'Movie stream target');
-        selectedTypeSummary.textContent = state.selectedType === 'series'
-            ? (state.selectedItem.releaseInfo || 'Series')
-            : (state.selectedItem.releaseInfo || 'Movie');
-        detailPlayButton.textContent = state.selectedType === 'series' ? 'Play Episode' : 'Play Movie';
-        detailEpisodesButton.textContent = 'More Episodes';
-        detailEpisodesButton.style.display = state.selectedType === 'series' ? '' : 'none';
-        detailEpisodesButton.disabled = state.selectedType !== 'series';
-        detailEpisodesButton.setAttribute('aria-hidden', state.selectedType === 'series' ? 'false' : 'true');
-        detailArtwork.style.backgroundImage = state.selectedItem.background || state.selectedItem.poster
-            ? 'linear-gradient(180deg, rgba(9, 11, 17, 0.18), rgba(9, 11, 17, 0.42)), url("' + (state.selectedItem.background || state.selectedItem.poster) + '")'
-            : 'linear-gradient(180deg, rgba(9, 11, 17, 0.18), rgba(9, 11, 17, 0.42)), #0b0d14';
-    }
-
-    updateLibraryButtonUi();
-    renderSeasonRail();
-    renderEpisodeRail();
-
+function renderStreamList() {
     var list = byId('streamList');
+
+    byId('streamCount').textContent = String(state.streams.length);
     list.innerHTML = '';
 
     if (!state.streams.length) {
+        applyDetailMode();
         return;
     }
 
@@ -5535,6 +5603,77 @@ function renderAddons() {
         button.appendChild(main);
         list.appendChild(button);
     });
+
+    applyDetailMode();
+}
+
+function renderEpisodeBrowserForMode() {
+    if (state.selectedType === 'series' && state.detailMode === 'episodes') {
+        renderSeasonRail();
+        renderEpisodeRail();
+        return;
+    }
+
+    if (byId('seasonRail')) {
+        byId('seasonRail').innerHTML = '';
+    }
+    if (byId('episodeRail')) {
+        byId('episodeRail').innerHTML = '';
+    }
+    if (byId('episodeSection')) {
+        byId('episodeSection').style.display = 'none';
+    }
+}
+
+function renderAddons() {
+    var detailArtwork = byId('detailArtwork');
+    var selectedTypeSummary = byId('selectedTypeSummary');
+    var detailPlayButton = byId('detailPlayButton');
+    var detailEpisodesButton = byId('detailEpisodesButton');
+
+    //byId('addonCount').textContent = String(state.addons.length);
+
+    if (!state.selectedItem) {
+        byId('selectedTitle').textContent = 'Nothing selected';
+        byId('selectedTypeLabel').textContent = 'Choose a title';
+        byId('selectedDescription').textContent = 'Pick a movie or show from the catalog pages to inspect addon streams here.';
+        byId('selectedVideoLabel').textContent = 'No episode selected';
+        selectedTypeSummary.textContent = 'Choose a title';
+        detailPlayButton.textContent = 'Play';
+        detailEpisodesButton.textContent = 'Episodes';
+        detailEpisodesButton.style.display = 'none';
+        detailEpisodesButton.disabled = true;
+        detailEpisodesButton.setAttribute('aria-hidden', 'true');
+        detailArtwork.style.backgroundImage = 'linear-gradient(180deg, rgba(9, 11, 17, 0.18), rgba(9, 11, 17, 0.42)), #0b0d14';
+    } else {
+        byId('selectedTitle').textContent = state.selectedItem.name || 'Untitled';
+        byId('selectedTypeLabel').textContent = state.selectedType === 'series' ? 'Series' : 'Movie';
+        byId('selectedDescription').textContent =
+            state.selectedItem.description ||
+            state.selectedItem.releaseInfo ||
+            'Installed addons and streams for the current selection appear below.';
+        byId('selectedVideoLabel').textContent = state.selectedVideo
+            ? (state.selectedType === 'series'
+                ? (formatSeasonLabel(getVideoSeason(state.selectedVideo)) + ' • Episode ' + (getVideoEpisode(state.selectedVideo) || '?'))
+                : (state.selectedVideo.title || state.selectedVideo.name || state.selectedVideo.id))
+            : (state.selectedType === 'series' ? 'Choose an episode' : 'Movie stream target');
+        selectedTypeSummary.textContent = state.selectedType === 'series'
+            ? (state.selectedItem.releaseInfo || 'Series')
+            : (state.selectedItem.releaseInfo || 'Movie');
+        detailPlayButton.textContent = state.selectedType === 'series' ? 'Play Episode' : 'Play Movie';
+        detailEpisodesButton.textContent = 'More Episodes';
+        detailEpisodesButton.style.display = state.selectedType === 'series' ? '' : 'none';
+        detailEpisodesButton.disabled = state.selectedType !== 'series';
+        detailEpisodesButton.setAttribute('aria-hidden', state.selectedType === 'series' ? 'false' : 'true');
+        detailArtwork.style.backgroundImage = state.selectedItem.background || state.selectedItem.poster
+            ? 'linear-gradient(180deg, rgba(9, 11, 17, 0.18), rgba(9, 11, 17, 0.42)), url("' + (state.selectedItem.background || state.selectedItem.poster) + '")'
+            : 'linear-gradient(180deg, rgba(9, 11, 17, 0.18), rgba(9, 11, 17, 0.42)), #0b0d14';
+    }
+
+    updateLibraryButtonUi();
+    renderEpisodeBrowserForMode();
+    renderStreamList();
+    applyDetailMode();
 }
 
 function renderPlayerState() {
@@ -6261,6 +6400,7 @@ function fetchMetaFromAddons(type, id) {
 function prepareSelection(item, type, options) {
     state.selectedItem = item;
     state.selectedType = type;
+    state.detailMode = 'details';
     state.allSeriesVideos = [];
     state.availableSeasons = [];
     state.selectedSeason = null;
@@ -6294,7 +6434,11 @@ function prepareSelection(item, type, options) {
                     setAddonsMessage('No episode metadata was returned for this series.', 'error');
                     return;
                 }
-                loadStreamsForSelection();
+                if (state.autoplayPending) {
+                    loadStreamsForSelection();
+                    return;
+                }
+                setAddonsMessage('Choose More Episodes to pick an episode, or Play to start the first episode.', null);
             }).catch(function(error) {
                 renderAddons();
                 setAddonsMessage('Series metadata failed: ' + error.message, 'error');
@@ -6306,38 +6450,48 @@ function prepareSelection(item, type, options) {
         id: item.id,
         title: item.name
     };
+    state.detailMode = 'details';
     renderAddons();
     loadStreamsForSelection();
 }
 
-function loadStreamsForSelection() {
+function loadStreamsForSelection(options) {
     var type = state.selectedType;
     var videoId = state.selectedVideo && state.selectedVideo.id;
     var eligibleAddons;
+    var shouldFocusStreams = !!(options && options.focusStreams);
 
     if (!state.selectedItem || !type || !videoId) {
         setAddonsMessage('Choose a title first.', 'error');
-        return;
+        return Promise.resolve();
     }
 
     eligibleAddons = getStreamCapableAddons(type, videoId);
     if (!eligibleAddons.length) {
         state.streams = [];
-        renderAddons();
+        renderStreamList();
         setAddonsMessage(
             state.authKey
                 ? 'No linked addons expose stream resources for this selection.'
                 : 'No stream addons are available yet. Sign in with Nuvio to sync your addon collection.',
             'error'
         );
-        return;
+        if (shouldFocusStreams && state.selectedType === 'series') {
+            state.detailMode = 'episodes';
+            renderAddons();
+            state.focusRegion = 'main';
+            state.mainRow = getSelectedEpisodeMainRow();
+            state.mainCol = state.availableSeasons.length && state.selectedEpisodes.length ? 1 : 0;
+            setTimeout(focusCurrent, 0);
+        }
+        return Promise.resolve();
     }
 
     state.streams = [];
-    renderAddons();
+    renderStreamList();
     setAddonsMessage('Loading streams from ' + eligibleAddons.length + ' addon(s)...', null);
 
-    Promise.all(eligibleAddons.map(function(addon) {
+    return Promise.all(eligibleAddons.map(function(addon) {
         return fetchStreamsFromAddon(addon, type, videoId);
     })).then(function(streamGroups) {
         state.streams = [];
@@ -6345,7 +6499,7 @@ function loadStreamsForSelection() {
             state.streams = state.streams.concat(group);
         });
 
-        renderAddons();
+        renderStreamList();
 
         if (state.streams.length) {
             setAddonsMessage('Loaded ' + state.streams.length + ' stream entries.', 'success');
@@ -6359,9 +6513,24 @@ function loadStreamsForSelection() {
                     return;
                 }
             }
+            if (shouldFocusStreams) {
+                state.focusRegion = 'main';
+                state.mainRow = getFirstStreamMainRow();
+                state.mainCol = 0;
+            }
             setTimeout(focusCurrent, 0);
         } else {
             setAddonsMessage('No stream entries were returned.', 'error');
+            if (shouldFocusStreams) {
+                if (state.selectedType === 'series') {
+                    state.detailMode = 'episodes';
+                    renderAddons();
+                }
+                state.focusRegion = 'main';
+                state.mainRow = getSelectedEpisodeMainRow();
+                state.mainCol = state.availableSeasons.length && state.selectedEpisodes.length ? 1 : 0;
+                setTimeout(focusCurrent, 0);
+            }
         }
     });
 }
@@ -6430,19 +6599,25 @@ function bindDetailActions() {
             return;
         }
 
+        state.detailMode = 'episodes';
+        renderAddons();
         state.focusRegion = 'main';
-        state.mainRow = 1;
-        state.mainCol = state.availableSeasons.length ? 0 : 1;
+        state.mainRow = getSelectedEpisodeMainRow();
+        state.mainCol = state.availableSeasons.length && state.selectedEpisodes.length ? 1 : 0;
         focusCurrent();
     });
 
     byId('detailSourcesButton').addEventListener('click', function() {
-        state.focusRegion = 'main';
-        state.mainRow = state.selectedType === 'series'
-            ? (1 + getEpisodeBrowserRowCount())
-            : 1;
-        state.mainCol = 0;
-        focusCurrent();
+        if (!state.selectedItem || !state.selectedType || !state.selectedVideo) {
+            setAddonsMessage('Choose a title first.', 'error');
+            return;
+        }
+
+        state.detailMode = 'sources';
+        renderAddons();
+        loadStreamsForSelection({
+            focusStreams: true
+        });
     });
 
     byId('detailLibraryButton').addEventListener('click', function() {
