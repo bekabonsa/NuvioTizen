@@ -1,6 +1,7 @@
 var CINEMETA_BASE = 'https://v3-cinemeta.strem.io';
 var OPENSUBTITLES_BASE = 'https://opensubtitles-v3.strem.io';
 var DEFAULT_ADDON_URLS = [CINEMETA_BASE, OPENSUBTITLES_BASE];
+var NUVIO_API_BASE = 'https://nuvio.tv';
 var SUPABASE_URL = 'https://dpyhjjcoabcglfmgecug.supabase.co';
 var SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRweWhqamNvYWJjZ2xmbWdlY3VnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA3ODYyNDcsImV4cCI6MjA4NjM2MjI0N30.U-3QSNDdpsnvRk_7ZL419AFTOtggHJJcmkodxeXjbkg';
 var TV_LOGIN_REDIRECT_BASE_URL = 'https://nuvioapp.space/tv-login';
@@ -14,14 +15,17 @@ var FALLBACK_SERIES_GENRES = ['Top', 'Drama', 'Comedy', 'Crime', 'Sci-Fi', 'Anim
 var NAV_VIEWS = ['search', 'home', 'library', 'series', 'movies', 'login'];
 var FEATURED_ROTATION_MS = 9000;
 var FEATURED_FADE_MS = 180;
-var HOME_CATALOG_LIMIT = 30;
+var HOME_CATALOG_LIMIT = 60;
 var CONTINUE_WATCHING_LIMIT = 20;
+var WATCH_PROGRESS_PULL_LIMIT = 50;
+var NUVIO_PROFILE_ID = 1;
 var LIBRARY_LIMIT = 120;
 var LIBRARY_ROW_SIZE = 6;
 var HOME_ARTWORK_PRELOAD_COUNT = 8;
 var ARTWORK_PRELOAD_LIMIT = 48;
 var BROWSE_ROW_SIZE = 5;
 var BROWSE_PAGE_SIZE = 25;
+var BROWSE_LOAD_MORE_SIZE = BROWSE_PAGE_SIZE * 5;
 var FORCE_AVPLAY_DEBUG = false;
 var PLAYER_SCRUB_INITIAL_NUDGE_MS = 5000;
 var PLAYER_SCRUB_TICK_MS = 50;
@@ -612,6 +616,10 @@ function normalizeContinueEntry(entry) {
             season: getVideoSeason(video),
             episode: getVideoEpisode(video)
         } : null,
+        progressKey: entry.progressKey || entry.progress_key || null,
+        position: typeof entry.position === 'number' ? entry.position : 0,
+        duration: typeof entry.duration === 'number' ? entry.duration : 0,
+        lastWatched: entry.lastWatched || entry.last_watched || null,
         updatedAt: entry.updatedAt || entry.updated_at || null
     };
 }
@@ -720,8 +728,12 @@ function trackContinueWatching(item, kind, video) {
             title: video.title || video.name || '',
             season: getVideoSeason(video),
             episode: getVideoEpisode(video)
-        } : null
+        } : null,
+        position: Math.max(0, Math.round((state.currentTimeMs || 0) / 1000)),
+        duration: Math.max(0, Math.round((state.durationMs || 0) / 1000)),
+        lastWatched: Date.now()
     };
+    snapshot.progressKey = buildWatchProgressKey(kind, snapshot.item.id, snapshot.video);
     key = continueEntryKey(snapshot);
 
     state.continueWatching = [snapshot].concat(state.continueWatching.filter(function(entry) {
@@ -3899,12 +3911,150 @@ function fetchAddonUrlsFromNuvio() {
     });
 }
 
-function rowToContinueEntry(row) {
+function buildWatchProgressKey(kind, itemId, video) {
+    var normalizedKind = normalizeAddonType(kind);
+    var season;
+    var episode;
+
+    if (normalizedKind !== 'series') {
+        return itemId || '';
+    }
+
+    season = getVideoSeason(video);
+    episode = getVideoEpisode(video);
+    return itemId + '_s' + season + 'e' + episode;
+}
+
+function buildWatchVideoId(kind, itemId, video) {
+    var normalizedKind = normalizeAddonType(kind);
+
+    if (normalizedKind !== 'series') {
+        return itemId || '';
+    }
+
+    return video && video.id
+        ? video.id
+        : itemId + ':' + getVideoSeason(video) + ':' + getVideoEpisode(video);
+}
+
+function buildNuvioMetadataAddonPayload() {
+    return state.addons.map(function(addon, index) {
+        var url = addon && addon.transportUrl ? addonBaseUrl(addon.transportUrl) : addon && addon.id || '';
+
+        return {
+            id: addon && addon.id ? addon.id : 'addon-' + index,
+            url: url,
+            name: addon && addon.manifest && addon.manifest.name ? addon.manifest.name : 'Addon',
+            enabled: true,
+            sort_order: index,
+            profile_id: NUVIO_PROFILE_ID
+        };
+    }).filter(function(addon) {
+        return !!addon.url;
+    });
+}
+
+function resolveWatchProgressMetadata(rows) {
+    var items = (rows || []).map(function(row) {
+        return {
+            progress_key: row.progress_key,
+            content_id: row.content_id,
+            content_type: row.content_type
+        };
+    }).filter(function(item) {
+        return item.progress_key && item.content_id && item.content_type;
+    });
+
+    if (!items.length) {
+        return Promise.resolve({});
+    }
+
+    return requestJson(NUVIO_API_BASE + '/api/addons/resolve-watch-metadata', 'POST', {
+        items: items,
+        addons: buildNuvioMetadataAddonPayload()
+    }).then(function(payload) {
+        return payload && payload.resolved ? payload.resolved : {};
+    }).catch(function(error) {
+        console.log('Nuvio watch metadata resolve failed', error.message);
+        return resolveWatchProgressMetadataFromAddons(items);
+    });
+}
+
+function resolveWatchProgressMetadataFromAddons(items) {
+    var resolved = {};
+
+    return Promise.all((items || []).map(function(item) {
+        var type = normalizeAddonType(item.content_type);
+
+        if (!type || !item.content_id || !item.progress_key) {
+            return null;
+        }
+
+        return fetchMetaFromAddons(type, item.content_id).then(function(meta) {
+            if (!meta) {
+                return null;
+            }
+
+            resolved[item.progress_key] = {
+                name: meta.name || item.content_id,
+                poster: meta.poster || '',
+                background: meta.background || meta.poster || '',
+                description: meta.description || '',
+                from_addon: ''
+            };
+            return null;
+        }).catch(function() {
+            return null;
+        });
+    })).then(function() {
+        return resolved;
+    });
+}
+
+function rowToContinueEntry(row, metadata) {
+    var kind = normalizeAddonType(row && row.content_type);
+    var resolved = metadata && row ? metadata[row.progress_key] : null;
+    var item;
+    var video = null;
+
+    if (!row || !kind || !row.content_id) {
+        return null;
+    }
+
+    item = {
+        id: row.content_id,
+        name: resolved && resolved.name ? resolved.name : row.content_id,
+        poster: resolved && resolved.poster ? resolved.poster : '',
+        background: resolved && resolved.background ? resolved.background : resolved && resolved.poster || '',
+        description: resolved && resolved.description ? resolved.description : '',
+        releaseInfo: '',
+        year: '',
+        imdbRating: ''
+    };
+
+    if (kind === 'series') {
+        video = {
+            id: row.video_id || row.content_id + ':' + row.season + ':' + row.episode,
+            title: '',
+            season: row.season,
+            episode: row.episode
+        };
+    } else {
+        video = {
+            id: row.video_id || row.content_id,
+            title: item.name
+        };
+    }
+
     return normalizeContinueEntry({
-        kind: row && (row.item_type || row.kind || row.type),
-        item: row && (row.item || row.meta || row.content),
-        video: row && (row.video || row.video_meta || row.episode),
-        updatedAt: row && row.updated_at
+        kind: kind,
+        item: item,
+        video: video,
+        progressKey: row.progress_key,
+        position: typeof row.position === 'number' ? row.position : 0,
+        duration: typeof row.duration === 'number' ? row.duration : 0,
+        lastWatched: row.last_watched,
+        updatedAt: row.last_watched ? new Date(row.last_watched).toISOString() : null
     });
 }
 
@@ -3922,22 +4072,24 @@ function fetchContinueWatchingFromNuvio() {
         return Promise.resolve(false);
     }
 
-    return fetchEffectiveOwnerId().then(function(ownerId) {
-        if (!ownerId) {
+    return requestSupabaseWithSession('/rest/v1/rpc/sync_pull_watch_progress', 'POST', {
+        p_profile_id: NUVIO_PROFILE_ID,
+        p_limit: WATCH_PROGRESS_PULL_LIMIT
+    }).then(function(rows) {
+        var progressRows = Array.isArray(rows) ? rows : [];
+
+        if (!progressRows.length) {
             return false;
         }
 
-        return requestSupabaseWithSession(
-            '/rest/v1/tv_watch_history?owner_id=eq.' + encodeURIComponent(ownerId)
-                + '&profile_id=eq.1&select=item_type,item,video,updated_at&order=updated_at.desc&limit=' + CONTINUE_WATCHING_LIMIT,
-            'GET'
-        ).then(function(rows) {
-            var entries = (Array.isArray(rows) ? rows : []).map(rowToContinueEntry).filter(Boolean);
+        return resolveWatchProgressMetadata(progressRows).then(function(metadata) {
+            var entries = progressRows.map(function(row) {
+                return rowToContinueEntry(row, metadata);
+            }).filter(Boolean);
 
             if (!entries.length) {
                 return false;
             }
-
             state.continueWatching = dedupeEntries(entries, normalizeContinueEntry, CONTINUE_WATCHING_LIMIT);
             saveContinueWatching();
             renderContinueWatching();
@@ -3985,6 +4137,25 @@ function fetchLibraryFromNuvio() {
     });
 }
 
+function continueEntryToWatchProgressPayload(entry) {
+    var normalized = normalizeContinueEntry(entry);
+    var contentId = normalized && normalized.item ? normalized.item.id : '';
+    var video = normalized ? normalized.video : null;
+    var kind = normalized ? normalizeAddonType(normalized.kind) : '';
+
+    return {
+        progress_key: normalized.progressKey || buildWatchProgressKey(kind, contentId, video),
+        content_id: contentId,
+        content_type: kind,
+        video_id: buildWatchVideoId(kind, contentId, video),
+        season: kind === 'series' && video ? getVideoSeason(video) : null,
+        episode: kind === 'series' && video ? getVideoEpisode(video) : null,
+        position: typeof normalized.position === 'number' ? normalized.position : 0,
+        duration: typeof normalized.duration === 'number' ? normalized.duration : 0,
+        last_watched: normalized.lastWatched || Date.now()
+    };
+}
+
 function pushContinueWatchingToNuvio(entry) {
     var normalized = normalizeContinueEntry(entry);
 
@@ -3992,34 +4163,36 @@ function pushContinueWatchingToNuvio(entry) {
         return Promise.resolve(false);
     }
 
-    return fetchEffectiveOwnerId().then(function(ownerId) {
-        var now = new Date().toISOString();
-
-        if (!ownerId) {
-            return false;
-        }
-
-        return requestSupabaseWithSessionHeaders(
-            '/rest/v1/tv_watch_history?on_conflict=owner_id,profile_id,item_id,item_type',
-            'POST',
-            {
-                owner_id: ownerId,
-                profile_id: 1,
-                item_id: normalized.item.id,
-                item_type: normalized.kind,
-                item: normalized.item,
-                video: normalized.video,
-                updated_at: now
-            },
-            {
-                Prefer: 'resolution=merge-duplicates,return=minimal'
-            }
-        ).then(function() {
-            return true;
-        });
+    return requestSupabaseWithSession('/rest/v1/rpc/sync_push_watch_progress', 'POST', {
+        p_entries: [continueEntryToWatchProgressPayload(normalized)],
+        p_profile_id: NUVIO_PROFILE_ID
+    }).then(function() {
+        return true;
     }).catch(function(error) {
         if (!isMissingSupabaseResource(error)) {
             console.log('Nuvio watch history update failed', error.message);
+        }
+        return false;
+    });
+}
+
+function deleteContinueWatchingFromNuvio(entry) {
+    var normalized = normalizeContinueEntry(entry);
+    var progressKey;
+
+    if (!state.authKey || !normalized) {
+        return Promise.resolve(false);
+    }
+
+    progressKey = normalized.progressKey || buildWatchProgressKey(normalized.kind, normalized.item.id, normalized.video);
+    return requestSupabaseWithSession('/rest/v1/rpc/sync_delete_watch_progress', 'POST', {
+        p_keys: [progressKey, normalized.item.id],
+        p_profile_id: NUVIO_PROFILE_ID
+    }).then(function() {
+        return true;
+    }).catch(function(error) {
+        if (!isMissingSupabaseResource(error)) {
+            console.log('Nuvio watch history delete failed', error.message);
         }
         return false;
     });
@@ -4307,6 +4480,7 @@ function addSelectedToLibrary() {
 function fetchBrowseCatalog(type, append) {
     var option = getSelectedBrowseOption(type);
     var skip = type === 'movie' ? state.movieSkip : state.seriesSkip;
+    var requestLimit = append ? BROWSE_LOAD_MORE_SIZE : BROWSE_PAGE_SIZE;
 
     if (!option) {
         if (type === 'movie') {
@@ -4326,7 +4500,7 @@ function fetchBrowseCatalog(type, append) {
     updateConnectionStatus('Loading ' + type + ' browse...', false, false);
 
     return requestJson(buildCatalogRequestUrl(option, skip), 'GET').then(function(payload) {
-        var items = uniqueCatalogItems(normalizeCatalogPayloadWithLimit(payload, BROWSE_PAGE_SIZE), BROWSE_PAGE_SIZE);
+        var items = uniqueCatalogItems(normalizeCatalogPayloadWithLimit(payload, requestLimit), requestLimit);
         if (type === 'movie') {
             state.movieBrowseItems = trimToFullBrowseRows(
                 append ? uniqueCatalogItems(state.movieBrowseItems.concat(items)) : items
@@ -4695,9 +4869,9 @@ function exchangeQrLoginSession(sessionId) {
             setLoginMessage('Signed in successfully via QR code.', 'success');
             renderQrLoginSignedIn();
             return fetchInstalledAddons().then(function() {
-                return fetchCatalogs();
-            }).then(function() {
                 return syncNuvioUserData();
+            }).then(function() {
+                return fetchCatalogs();
             }).then(function() {
                 setView('home', {
                     focusRegion: 'main',
@@ -4940,9 +5114,9 @@ function login(email, password) {
             setLoginMessage('Signed in successfully.', 'success');
 
             return fetchInstalledAddons().then(function() {
-                return fetchCatalogs();
-            }).then(function() {
                 return syncNuvioUserData();
+            }).then(function() {
+                return fetchCatalogs();
             }).then(function() {
                 setView('home', {
                     focusRegion: 'main',
@@ -7063,9 +7237,9 @@ function init() {
     verifyStoredSession().catch(function() {
         return null;
     }).then(function() {
-        return syncNuvioUserData();
-    }).then(function() {
         return fetchInstalledAddons();
+    }).then(function() {
+        return syncNuvioUserData();
     }).then(function() {
         return fetchCatalogs();
     }).catch(function(error) {
