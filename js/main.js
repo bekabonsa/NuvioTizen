@@ -20,6 +20,7 @@ var CONTINUE_WATCHING_LIMIT = 20;
 var WATCH_PROGRESS_PULL_LIMIT = 50;
 var NUVIO_PROFILE_ID = 1;
 var LIBRARY_LIMIT = 120;
+var LIBRARY_PULL_LIMIT = 500;
 var LIBRARY_ROW_SIZE = 6;
 var HOME_ARTWORK_PRELOAD_COUNT = 8;
 var ARTWORK_PRELOAD_LIMIT = 48;
@@ -634,8 +635,14 @@ function normalizeLibraryEntry(entry) {
     return {
         kind: entry.kind,
         item: item,
-        addedAt: entry.addedAt || entry.created_at || entry.updated_at || null,
-        updatedAt: entry.updatedAt || entry.updated_at || null
+        addedAt: typeof entry.addedAt !== 'undefined' ? entry.addedAt : entry.created_at || entry.updated_at || null,
+        updatedAt: entry.updatedAt || entry.updated_at || null,
+        backendId: entry.backendId || entry.id || null,
+        userId: entry.userId || entry.user_id || null,
+        posterShape: entry.posterShape || entry.poster_shape || 'POSTER',
+        genres: Array.isArray(entry.genres) ? entry.genres.slice() : [],
+        addonBaseUrl: entry.addonBaseUrl || entry.addon_base_url || null,
+        createdAt: entry.createdAt || entry.created_at || null
     };
 }
 
@@ -4059,11 +4066,32 @@ function rowToContinueEntry(row, metadata) {
 }
 
 function rowToLibraryEntry(row) {
+    var kind = normalizeAddonType(row && row.content_type);
+
+    if (!row || !kind || !row.content_id) {
+        return null;
+    }
+
     return normalizeLibraryEntry({
-        kind: row && (row.item_type || row.kind || row.type),
-        item: row && (row.item || row.meta || row.content),
+        kind: kind,
+        item: {
+            id: row.content_id,
+            name: row.name || row.content_id,
+            poster: row.poster || '',
+            background: row.background || row.poster || '',
+            description: row.description || '',
+            releaseInfo: row.release_info || '',
+            year: row.release_info || '',
+            imdbRating: row.imdb_rating
+        },
         addedAt: row && (row.created_at || row.added_at),
-        updatedAt: row && row.updated_at
+        updatedAt: row && row.updated_at,
+        backendId: row.id,
+        userId: row.user_id,
+        posterShape: row.poster_shape,
+        genres: row.genres,
+        addonBaseUrl: row.addon_base_url,
+        createdAt: row.created_at
     });
 }
 
@@ -4108,27 +4136,26 @@ function fetchLibraryFromNuvio() {
         return Promise.resolve(false);
     }
 
-    return fetchEffectiveOwnerId().then(function(ownerId) {
-        if (!ownerId) {
-            return false;
-        }
+    return requestSupabaseWithSession('/rest/v1/rpc/sync_pull_library', 'POST', {
+        p_limit: LIBRARY_PULL_LIMIT,
+        p_offset: 0,
+        p_profile_id: NUVIO_PROFILE_ID
+    }).then(function(rows) {
+        var entries = (Array.isArray(rows) ? rows : []).map(rowToLibraryEntry).filter(Boolean);
 
-        return requestSupabaseWithSession(
-            '/rest/v1/tv_library?owner_id=eq.' + encodeURIComponent(ownerId)
-                + '&profile_id=eq.1&select=item_type,item,created_at,updated_at&order=updated_at.desc&limit=' + LIBRARY_LIMIT,
-            'GET'
-        ).then(function(rows) {
-            var entries = (Array.isArray(rows) ? rows : []).map(rowToLibraryEntry).filter(Boolean);
-
-            if (!entries.length) {
-                return false;
-            }
-
-            state.libraryItems = dedupeEntries(entries, normalizeLibraryEntry, LIBRARY_LIMIT);
+        if (!entries.length) {
+            state.libraryItems = [];
             saveLibraryItems();
             renderLibraryView();
+            updateLibraryButtonUi();
             return true;
-        });
+        }
+
+        state.libraryItems = dedupeEntries(entries, normalizeLibraryEntry, LIBRARY_LIMIT);
+        saveLibraryItems();
+        renderLibraryView();
+        updateLibraryButtonUi();
+        return true;
     }).catch(function(error) {
         if (!isMissingSupabaseResource(error)) {
             console.log('Nuvio library sync unavailable', error.message);
@@ -4198,38 +4225,52 @@ function deleteContinueWatchingFromNuvio(entry) {
     });
 }
 
-function pushLibraryItemToNuvio(entry) {
+function libraryEntryToNuvioPayload(entry) {
     var normalized = normalizeLibraryEntry(entry);
+    var item = normalized && normalized.item ? normalized.item : {};
+    var rating = item.imdbRating;
+    var payload = {
+        content_id: item.id || '',
+        content_type: normalizeAddonType(normalized && normalized.kind),
+        name: item.name || item.id || '',
+        poster: item.poster || '',
+        poster_shape: normalized && normalized.posterShape || 'POSTER',
+        background: item.background || item.poster || '',
+        description: item.description || '',
+        release_info: item.releaseInfo || item.year || '',
+        imdb_rating: typeof rating === 'number' ? rating : rating ? parseFloat(rating) || null : null,
+        genres: normalized && Array.isArray(normalized.genres) ? normalized.genres : [],
+        addon_base_url: normalized && normalized.addonBaseUrl || null,
+        added_at: normalized && typeof normalized.addedAt === 'number' ? normalized.addedAt : 0
+    };
 
-    if (!state.authKey || !normalized) {
+    if (normalized && normalized.backendId) {
+        payload.id = normalized.backendId;
+    }
+    if (normalized && normalized.userId) {
+        payload.user_id = normalized.userId;
+    }
+    if (normalized && normalized.createdAt) {
+        payload.created_at = normalized.createdAt;
+    }
+    if (normalized && normalized.updatedAt) {
+        payload.updated_at = normalized.updatedAt;
+    }
+    payload.profile_id = NUVIO_PROFILE_ID;
+
+    return payload;
+}
+
+function syncLibraryToNuvio() {
+    if (!state.authKey) {
         return Promise.resolve(false);
     }
 
-    return fetchEffectiveOwnerId().then(function(ownerId) {
-        var now = new Date().toISOString();
-
-        if (!ownerId) {
-            return false;
-        }
-
-        return requestSupabaseWithSessionHeaders(
-            '/rest/v1/tv_library?on_conflict=owner_id,profile_id,item_id,item_type',
-            'POST',
-            {
-                owner_id: ownerId,
-                profile_id: 1,
-                item_id: normalized.item.id,
-                item_type: normalized.kind,
-                item: normalized.item,
-                created_at: normalized.addedAt || now,
-                updated_at: now
-            },
-            {
-                Prefer: 'resolution=merge-duplicates,return=minimal'
-            }
-        ).then(function() {
-            return true;
-        });
+    return requestSupabaseWithSession('/rest/v1/rpc/sync_push_library', 'POST', {
+        p_items: state.libraryItems.map(libraryEntryToNuvioPayload),
+        p_profile_id: NUVIO_PROFILE_ID
+    }).then(function() {
+        return true;
     }).catch(function(error) {
         if (!isMissingSupabaseResource(error)) {
             console.log('Nuvio library update failed', error.message);
@@ -4438,10 +4479,10 @@ function updateLibraryButtonUi() {
         return;
     }
 
-    button.disabled = !selected || saved;
+    button.disabled = !selected;
     button.classList.toggle('is-saved', saved);
-    button.setAttribute('aria-label', saved ? 'In library' : 'Add to library');
-    button.title = saved ? 'Already in your library' : 'Add this title to your library';
+    button.setAttribute('aria-label', saved ? 'Remove from library' : 'Add to library');
+    button.title = saved ? 'Remove this title from your library' : 'Add this title to your library';
 }
 
 function addSelectedToLibrary() {
@@ -4462,7 +4503,7 @@ function addSelectedToLibrary() {
     key = continueEntryKey(snapshot);
 
     if (isSelectedInLibrary()) {
-        updateLibraryButtonUi();
+        removeSelectedFromLibrary();
         return;
     }
 
@@ -4474,7 +4515,28 @@ function addSelectedToLibrary() {
     renderLibraryView();
     updateLibraryButtonUi();
     setAddonsMessage('Added to your library.', 'success');
-    pushLibraryItemToNuvio(snapshot);
+    syncLibraryToNuvio();
+}
+
+function removeSelectedFromLibrary() {
+    var key;
+
+    if (!state.selectedItem || !state.selectedType) {
+        setAddonsMessage('Choose a title first.', 'error');
+        updateLibraryButtonUi();
+        return;
+    }
+
+    key = state.selectedType + ':' + state.selectedItem.id;
+    state.libraryItems = state.libraryItems.filter(function(entry) {
+        return continueEntryKey(entry) !== key;
+    });
+
+    saveLibraryItems();
+    renderLibraryView();
+    updateLibraryButtonUi();
+    setAddonsMessage('Removed from your library.', 'success');
+    syncLibraryToNuvio();
 }
 
 function fetchBrowseCatalog(type, append) {
