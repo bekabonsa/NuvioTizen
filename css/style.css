@@ -580,7 +580,12 @@ body[data-current-view="player"] .content-row.is-row-far {
 }
 
 .browse-shelf-hero {
-    padding-bottom: 22px;
+    padding-bottom: 12px;
+}
+
+#movieGenreSection .section-copy,
+#seriesGenreSection .section-copy {
+    display: none;
 }
 
 .browse-action-shelf {
@@ -622,6 +627,13 @@ body[data-current-view="player"] .content-row.is-row-far {
     scroll-behavior: auto;
 }
 
+.genre-chip-row {
+    gap: 8px;
+    align-items: center;
+    padding-top: 10px;
+    padding-bottom: 32px;
+}
+
 .rail-continue {
     padding-top: 18px;
 }
@@ -651,25 +663,59 @@ body[data-current-view="player"] .content-row.is-row-far {
 }
 
 .genre-chip {
-    min-height: 46px;
-    padding: 0 18px;
-    border-radius: 999px;
-    border: 1px solid var(--border);
-    background: rgba(255, 255, 255, 0.05);
-    color: rgba(255, 255, 255, 0.9);
+    position: relative;
+    min-height: 38px;
+    padding: 0 12px;
+    border-radius: 0;
+    border: 0;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.66);
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    font-size: 16px;
-    font-weight: 700;
+    font-size: 17px;
+    font-weight: 600;
     transition: transform 140ms ease, background 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
     will-change: transform;
 }
 
+.genre-chip::after {
+    content: "";
+    position: absolute;
+    left: 12px;
+    right: 12px;
+    bottom: 1px;
+    height: 2px;
+    background: transparent;
+}
+
+.genre-chip.is-filter-group-start {
+    margin-left: 22px;
+}
+
+.genre-chip.is-filter-group-start::before {
+    content: "";
+    position: absolute;
+    left: -13px;
+    top: 11px;
+    bottom: 11px;
+    width: 1px;
+    background: rgba(255, 255, 255, 0.16);
+}
+
+.genre-chip.is-year-filter {
+    min-width: 58px;
+}
+
 .genre-chip.is-selected,
 .search-scope.is-selected {
-    background: rgba(255, 255, 255, 0.14);
-    border-color: rgba(255, 255, 255, 0.16);
+    background: transparent;
+    border-color: transparent;
+    color: #fff;
+}
+
+.genre-chip.is-selected::after {
+    background: #fff;
 }
 
 .card {
@@ -1731,6 +1777,19 @@ input:focus {
     /*transform: translateY(-2px);*/
 }
 
+.genre-chip:focus,
+.genre-chip:hover {
+    background: transparent;
+    border-color: transparent;
+    color: #fff;
+    box-shadow: none;
+}
+
+.genre-chip:focus::after,
+.genre-chip:hover::after {
+    background: rgba(255, 255, 255, 0.72);
+}
+
 .card:focus {
     outline: none;
     z-index: 12;
@@ -1753,6 +1812,16 @@ input:focus {
     border-color: rgba(255, 255, 255, 0.82);
     color: #090a11;
     box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.42), 0 18px 32px rgba(0, 0, 0, 0.34);
+}
+
+.action-button:disabled,
+.action-button:disabled:focus,
+.action-button:disabled:hover {
+    border-color: var(--border);
+    background: rgba(255, 255, 255, 0.05);
+    opacity: 0.38;
+    transform: none;
+    box-shadow: none;
 }
 
 .card:focus .poster,
