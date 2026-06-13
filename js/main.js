@@ -7312,7 +7312,9 @@ function createCard(item, kind) {
     title.textContent = item.name || 'Untitled';
 
     meta.className = 'card-meta';
-    meta.textContent = options.metaText || formatMetaLine(item, kind === 'movie' ? 'Movie' : 'Series');
+    meta.textContent = Object.prototype.hasOwnProperty.call(options, 'metaText')
+        ? (options.metaText || '')
+        : formatMetaLine(item, kind === 'movie' ? 'Movie' : 'Series');
 
     if (options.continueProgress) {
         card.classList.add('card-has-progress');
@@ -7374,8 +7376,8 @@ function createContinueProgress(progress) {
     meta.appendChild(current);
     meta.appendChild(remaining);
     rail.appendChild(fill);
-    wrap.appendChild(meta);
     wrap.appendChild(rail);
+    wrap.appendChild(meta);
 
     return wrap;
 }
@@ -7443,7 +7445,8 @@ function renderHomeRailWindow(containerId, entries, key) {
             continueProgress: entry.continueProgress,
             metaText: entry.metaText,
             eagerImage: visibleIndex === 0,
-            showSynopsis: visibleIndex === 0
+            hideSynopsis: key === 'continue',
+            showSynopsis: key !== 'continue' && visibleIndex === 0
         }));
     });
 }
