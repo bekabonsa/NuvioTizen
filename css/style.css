@@ -522,6 +522,26 @@ body[data-current-view="player"] .content-row.is-row-far {
     will-change: transform;
 }
 
+.action-button.is-loading {
+    pointer-events: none;
+}
+
+.action-button.is-loading::before {
+    content: "";
+    width: 18px;
+    height: 18px;
+    border-radius: 999px;
+    border: 2px solid rgba(255, 255, 255, 0.36);
+    border-top-color: #fff;
+    animation: button-spinner 720ms linear infinite;
+}
+
+@keyframes button-spinner {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
 .action-primary {
     background: #f1f3f8;
     border-color: rgba(255, 255, 255, 0.22);
