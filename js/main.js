@@ -54,6 +54,8 @@ var artworkPreloadOrder = [];
 var browseCatalogPayloadCache = {};
 var browseCatalogPayloadPending = {};
 var browsePrefetchTimers = {};
+var homeActiveMetaCache = {};
+var homeActiveMetaPending = {};
 var SEARCH_KEYBOARD_ROWS = [
     ['a', 'b', 'c', 'd', 'e', 'f'],
     ['g', 'h', 'i', 'j', 'k', 'l'],
@@ -2769,6 +2771,90 @@ function getHomeRailDescriptorForMainRow(rowIndex) {
     return getHomeRailDescriptors()[rowIndex - 1] || null;
 }
 
+function getHomeRailDescriptorByKey(key) {
+    return getHomeRailDescriptors().filter(function(descriptor) {
+        return descriptor.key === key;
+    })[0] || null;
+}
+
+function getHomeActiveMetaCacheKey(kind, item) {
+    return kind && item && item.id ? kind + ':' + item.id : '';
+}
+
+function mergeHomeActiveMeta(item, kind) {
+    var cacheKey = getHomeActiveMetaCacheKey(kind, item);
+    var meta = cacheKey ? homeActiveMetaCache[cacheKey] : null;
+    var merged = {};
+    var prop;
+
+    if (!meta) {
+        return item;
+    }
+
+    for (prop in item) {
+        if (Object.prototype.hasOwnProperty.call(item, prop)) {
+            merged[prop] = item[prop];
+        }
+    }
+    for (prop in meta) {
+        if (Object.prototype.hasOwnProperty.call(meta, prop)) {
+            merged[prop] = meta[prop];
+        }
+    }
+
+    merged.id = item.id;
+    merged.name = meta.name || item.name;
+    merged.poster = item.poster || meta.poster;
+    merged.background = item.background || meta.background || meta.poster;
+
+    return merged;
+}
+
+function hasHomeActiveMetaDetails(item, key) {
+    return !!(
+        item && (
+            item.runtime ||
+            item.runtimeMins ||
+            item.runtimeMinutes ||
+            item.duration ||
+            item.length
+        )
+    ) && !!getItemGenreLabel(item, getHomeGenreFallback(key));
+}
+
+function scheduleHomeActiveMetaEnrichment(entry, key) {
+    var item = entry && entry.item;
+    var kind = entry && entry.kind;
+    var cacheKey = getHomeActiveMetaCacheKey(kind, item);
+
+    if ((key !== 'movies' && key !== 'series') || !cacheKey || hasHomeActiveMetaDetails(item, key)) {
+        return;
+    }
+    if (Object.prototype.hasOwnProperty.call(homeActiveMetaCache, cacheKey) || homeActiveMetaPending[cacheKey]) {
+        return;
+    }
+
+    homeActiveMetaPending[cacheKey] = true;
+    fetchMetaFromAddons(kind, item.id).then(function(meta) {
+        var descriptor;
+
+        homeActiveMetaCache[cacheKey] = meta || null;
+        homeActiveMetaPending[cacheKey] = false;
+        if (state.currentView !== 'home') {
+            return;
+        }
+
+        descriptor = getHomeRailDescriptorByKey(key);
+        if (descriptor && state.homeRailIndices[key] >= 0) {
+            renderSingleHomeRail(descriptor);
+            setTimeout(focusCurrent, 0);
+        }
+    }).catch(function() {
+        homeActiveMetaCache[cacheKey] = null;
+        homeActiveMetaPending[cacheKey] = false;
+    });
+}
+
 function getSearchPaneInfo() {
     var keyboardRows = queryAll('#searchKeyboard .search-keyboard-row').length;
     var suggestionCount = queryAll('#searchSuggestionList .search-suggestion').length;
@@ -3117,6 +3203,87 @@ function formatMetaLine(item, kind) {
         item.releaseInfo || item.year || '',
         item.imdbRating ? 'IMDb ' + item.imdbRating : ''
     ].filter(Boolean).join(' • ');
+}
+
+function getItemRuntimeValue(item) {
+    return item && (
+        item.runtime ||
+        item.runtimeMins ||
+        item.runtimeMinutes ||
+        item.duration ||
+        item.length
+    );
+}
+
+function formatItemRuntime(item) {
+    var value = getItemRuntimeValue(item);
+    var minutes;
+    var hours;
+    var remainder;
+
+    if (typeof value === 'number' && !isNaN(value)) {
+        minutes = value > 1000 ? Math.round(value / 60000) : Math.round(value);
+    } else if (typeof value === 'string' && value) {
+        if (/^\d+$/.test(value)) {
+            minutes = parseInt(value, 10);
+        } else {
+            return value.replace(/^PT/i, '').replace(/H/i, 'h ').replace(/M/i, 'm').trim();
+        }
+    }
+
+    if (!minutes) {
+        return '';
+    }
+
+    hours = Math.floor(minutes / 60);
+    remainder = minutes % 60;
+    if (hours && remainder) {
+        return hours + 'h ' + remainder + 'm';
+    }
+    if (hours) {
+        return hours + 'h';
+    }
+
+    return minutes + 'm';
+}
+
+function getItemGenreLabel(item, fallbackGenre) {
+    var value = item && (item.genres || item.genre);
+    var genres;
+
+    if (Array.isArray(value)) {
+        genres = value.filter(Boolean);
+        if (genres.length) {
+            return genres.slice(0, 2).join(' / ');
+        }
+    }
+    if (typeof value === 'string' && value) {
+        return value.split(',').map(function(part) {
+            return part.trim();
+        }).filter(Boolean).slice(0, 2).join(' / ');
+    }
+
+    return fallbackGenre || '';
+}
+
+function getHomeGenreFallback(key) {
+    var option;
+
+    if (key !== 'movies' && key !== 'series') {
+        return '';
+    }
+
+    option = getSelectedBrowseOption(key === 'movies' ? 'movie' : 'series');
+    return option && option.filterGroup === 'genre' ? option.label : '';
+}
+
+function formatHomeActiveMetaLine(item, kind, key) {
+    return [
+        item && item.imdbRating ? 'IMDb ' + item.imdbRating : '',
+        formatItemRuntime(item),
+        getItemGenreLabel(item, getHomeGenreFallback(key)),
+        item && (item.releaseInfo || item.year) || ''
+    ].filter(Boolean).join(' • ') || formatMetaLine(item, kind === 'movie' ? 'Movie' : 'Series');
 }
 
 function getVideoSeason(video) {
@@ -7463,12 +7630,13 @@ function renderHomeRailWindow(containerId, entries, key) {
     var moveDirection = state.homeRailMoveDirections[key];
     var previousEntry;
     var shouldShowPeek;
+    var shouldOffsetFirstItem;
     var visible;
     var useBackgroundForAllCards = key === 'continue';
 
     container.innerHTML = '';
     container.classList.add('rail-home-window');
-    container.classList.remove('has-home-peek', 'is-moving-left', 'is-moving-right');
+    container.classList.remove('has-home-peek', 'has-home-start-offset', 'is-moving-left', 'is-moving-right');
     state.homeRailMoveDirections[key] = null;
 
     if (!entries.length) {
@@ -7486,8 +7654,12 @@ function renderHomeRailWindow(containerId, entries, key) {
     state.homeRailIndices[key] = index;
 
     shouldShowPeek = (key === 'movies' || key === 'series') && index > 0 && entries.length > 1;
+    shouldOffsetFirstItem = (key === 'movies' || key === 'series') && index === 0 && entries.length > 1;
     if (shouldShowPeek) {
         container.classList.add('has-home-peek');
+    }
+    if (shouldOffsetFirstItem) {
+        container.classList.add('has-home-start-offset');
     }
     if (moveDirection === 'left' || moveDirection === 'right') {
         container.classList.add('is-moving-' + moveDirection);
@@ -7506,14 +7678,25 @@ function renderHomeRailWindow(containerId, entries, key) {
     warmHomeRailArtwork(entries, index, HOME_ARTWORK_PRELOAD_COUNT);
 
     visible.forEach(function(entry, visibleIndex) {
-        container.appendChild(createCard(entry.item, entry.kind, {
-            className: visibleIndex === 0 ? 'is-home-active' : 'is-home-compact',
-            imageUrl: (visibleIndex === 0 || useBackgroundForAllCards) ? (entry.item.background || entry.item.poster) : entry.item.poster,
+        var isActive = visibleIndex === 0;
+        var item = isActive && (key === 'movies' || key === 'series')
+            ? mergeHomeActiveMeta(entry.item, entry.kind)
+            : entry.item;
+
+        if (isActive) {
+            scheduleHomeActiveMetaEnrichment(entry, key);
+        }
+
+        container.appendChild(createCard(item, entry.kind, {
+            className: isActive ? 'is-home-active' : 'is-home-compact',
+            imageUrl: (isActive || useBackgroundForAllCards) ? (item.background || item.poster) : item.poster,
             continueProgress: entry.continueProgress,
-            metaText: entry.metaText,
-            eagerImage: visibleIndex === 0,
+            metaText: isActive && (key === 'movies' || key === 'series')
+                ? formatHomeActiveMetaLine(item, entry.kind, key)
+                : entry.metaText,
+            eagerImage: isActive,
             hideSynopsis: key === 'continue',
-            showSynopsis: key !== 'continue' && visibleIndex === 0
+            showSynopsis: key !== 'continue' && isActive
         }));
     });
 }

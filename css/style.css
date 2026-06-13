@@ -2090,6 +2090,11 @@ input:focus {
     padding-left: 0;
 }
 
+#homeMovieRail.has-home-start-offset,
+#homeSeriesRail.has-home-start-offset {
+    padding-left: calc(4.6% + 18px);
+}
+
 .rail-home-window .card {
     flex: 0 0 18.6%;
     width: 18.6%;
@@ -2189,8 +2194,11 @@ input:focus {
 
 .rail-home-window .card.is-home-active .card-title {
     font-size: 34px;
+    font-weight: 900;
     line-height: 1.02;
     margin-top: 6px;
+    color: #fff;
+    text-shadow: 0 0 0 #fff, 0.6px 0 0 #fff;
 }
 
 .rail-home-window .card.is-home-active .card-meta {
