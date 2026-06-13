@@ -1026,6 +1026,51 @@ body[data-current-view="player"] .content-row.is-row-far {
     line-height: 1.35;
 }
 
+.continue-progress {
+    width: 100%;
+    margin-top: -2px;
+}
+
+.continue-progress-meta {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 7px;
+    color: rgba(255, 255, 255, 0.72);
+    font-size: 14px;
+    font-weight: 700;
+    line-height: 1;
+}
+
+.continue-progress-time {
+    color: #fff;
+}
+
+.continue-progress-remaining {
+    min-width: 0;
+    overflow: hidden;
+    text-align: right;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.continue-progress-rail {
+    position: relative;
+    height: 7px;
+    border-radius: 999px;
+    overflow: hidden;
+    background: rgba(255, 255, 255, 0.14);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+}
+
+.continue-progress-fill {
+    width: 0%;
+    height: 100%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, rgba(255, 255, 255, 0.94) 0%, rgba(255, 255, 255, 0.72) 100%);
+}
+
 .card-synopsis {
     max-height: 0;
     overflow: hidden;
@@ -2109,6 +2154,18 @@ input:focus {
     font-size: 18px;
 }
 
+.rail-home-window .card.is-home-active .continue-progress {
+    margin-top: 0;
+}
+
+.rail-home-window .card.is-home-active .continue-progress-meta {
+    font-size: 15px;
+}
+
+.rail-home-window .card.is-home-active .continue-progress-rail {
+    height: 8px;
+}
+
 .rail-home-window .card.is-home-active .card-synopsis {
     max-height: 132px;
     opacity: 1;
@@ -2119,6 +2176,14 @@ input:focus {
 
 .rail-home-window .card.is-home-compact .card-synopsis {
     display: none;
+}
+
+.rail-home-window .card.is-home-compact .continue-progress-meta {
+    display: none;
+}
+
+.rail-home-window .card.is-home-compact .continue-progress-rail {
+    height: 5px;
 }
 
 .rail-home-window .card.is-home-compact .card-title,

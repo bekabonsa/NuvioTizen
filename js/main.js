@@ -21,8 +21,10 @@ function buildDescendingYearList(startYear, endYear) {
     return years;
 }
 
-var CINEMETA_MOVIE_GENRES = ['Action', 'Adventure', 'Animation', 'Biography', 'Comedy', 'Crime', 'Documentary', 'Drama', 'Family', 'Fantasy', 'History', 'Horror', 'Mystery', 'Romance', 'Sci-Fi', 'Sport', 'Thriller', 'War', 'Western'];
-var CINEMETA_SERIES_GENRES = ['Action', 'Adventure', 'Animation', 'Comedy', 'Drama', 'Fantasy'];
+var CINEMETA_MOVIE_GENRES = ['Action', 'Adventure', 'Animation', 'Comedy', 'Crime', 'Documentary', 'Drama', 'Horror', 'Sci-Fi', 'Thriller'];
+var CINEMETA_MOVIE_EXPANSION_GENRES = ['Action', 'Adventure', 'Animation', 'Biography', 'Comedy', 'Crime', 'Documentary', 'Drama', 'Family', 'Fantasy', 'History', 'Horror', 'Mystery', 'Romance', 'Sci-Fi', 'Sport', 'Thriller', 'War', 'Western'];
+var CINEMETA_SERIES_GENRES = ['Action', 'Adventure', 'Animation', 'Comedy', 'Drama', 'Fantasy', 'Sci-Fi'];
+var CINEMETA_SERIES_EXPANSION_GENRES = ['Action', 'Adventure', 'Animation', 'Comedy', 'Drama', 'Fantasy', 'Sci-Fi'];
 var CINEMETA_YEAR_FILTERS = buildDescendingYearList(2026, 1960);
 var CINEMETA_EXPANSION_YEAR_FILTERS = buildDescendingYearList(2026, 1960);
 var CINEMETA_MOVIE_SEARCH_SEEDS = ['the', 'love', 'life', 'night', 'day', 'man', 'girl', 'dark', 'city', 'family', 'last', 'first', 'new', 'old', 'house', 'king', 'school', 'space', 'star', 'time', 'game', 'home'];
@@ -2681,11 +2683,48 @@ function buildContinueEntries() {
         return {
             item: entry.item,
             kind: entry.kind,
+            continueProgress: getContinueProgress(entry),
             metaText: entry.kind === 'series' && entry.video
                 ? 'Resume • Season ' + entry.video.season + ' • Episode ' + entry.video.episode
                 : 'Resume watching'
         };
     });
+}
+
+function getContinueProgress(entry) {
+    var position = entry && typeof entry.position === 'number' ? Math.max(0, entry.position) : 0;
+    var duration = entry && typeof entry.duration === 'number' ? Math.max(0, entry.duration) : 0;
+    var remaining;
+    var percent;
+
+    if (!duration || !position) {
+        return null;
+    }
+
+    remaining = Math.max(0, duration - position);
+    percent = Math.max(0, Math.min(100, (position / duration) * 100));
+
+    return {
+        percent: percent,
+        currentLabel: formatPlaybackTime(position * 1000),
+        durationLabel: formatPlaybackTime(duration * 1000),
+        remainingLabel: remaining > 0 ? formatContinueRemainingTime(remaining) : 'Almost done'
+    };
+}
+
+function formatContinueRemainingTime(seconds) {
+    var totalMinutes = Math.max(1, Math.ceil((seconds || 0) / 60));
+    var hours = Math.floor(totalMinutes / 60);
+    var minutes = totalMinutes % 60;
+
+    if (hours > 0 && minutes > 0) {
+        return hours + 'h ' + minutes + 'm left';
+    }
+    if (hours > 0) {
+        return hours + 'h left';
+    }
+
+    return totalMinutes + 'm left';
 }
 
 function getHomeRailDescriptors() {
@@ -3939,6 +3978,10 @@ function cloneBrowseOptionWithArgs(option, label, extraArgs) {
     };
 }
 
+function getCinemetaExpansionGenres(type) {
+    return type === 'movie' ? CINEMETA_MOVIE_EXPANSION_GENRES : CINEMETA_SERIES_EXPANSION_GENRES;
+}
+
 function isCinemetaBrowseExpansionOption(option) {
     var baseUrl = option && option.addon ? addonBaseUrl(option.addon.transportUrl) : '';
 
@@ -3959,6 +4002,12 @@ function getCinemetaBrowseExpansionOptions(type, selectedOption) {
     var yearTemplate = options.filter(function(option) {
         return option && isCinemetaBrowseExpansionOption(option) && option.catalogId === 'year';
     })[0];
+    var genreTemplate = options.filter(function(option) {
+        return option
+            && isCinemetaBrowseExpansionOption(option)
+            && option.catalogId === 'top'
+            && !option.extraArgs;
+    })[0];
     var searchTemplate = options.filter(function(option) {
         return option
             && isCinemetaBrowseExpansionOption(option)
@@ -3970,6 +4019,16 @@ function getCinemetaBrowseExpansionOptions(type, selectedOption) {
     output.forEach(function(option) {
         existingKeys[option.catalogId + '::' + stableArgsKey(option.extraArgs)] = true;
     });
+    if (genreTemplate) {
+        getCinemetaExpansionGenres(type).forEach(function(genre) {
+            var key = 'top::genre=' + genre;
+
+            if (!existingKeys[key]) {
+                existingKeys[key] = true;
+                output.push(cloneBrowseOptionWithArgs(genreTemplate, genre, { genre: genre }));
+            }
+        });
+    }
     if (yearTemplate) {
         CINEMETA_EXPANSION_YEAR_FILTERS.forEach(function(year) {
             var key = 'year::genre=' + year;
@@ -7224,6 +7283,7 @@ function createCard(item, kind) {
     var title = document.createElement('div');
     var meta = document.createElement('div');
     var synopsis = document.createElement('div');
+    var progress;
     var imageUrl = options.imageUrl || item.poster;
 
     card.className = 'card';
@@ -7254,6 +7314,11 @@ function createCard(item, kind) {
     meta.className = 'card-meta';
     meta.textContent = options.metaText || formatMetaLine(item, kind === 'movie' ? 'Movie' : 'Series');
 
+    if (options.continueProgress) {
+        card.classList.add('card-has-progress');
+        progress = createContinueProgress(options.continueProgress);
+    }
+
     if (!options.hideSynopsis) {
         synopsis.className = 'card-synopsis';
         synopsis.textContent = item.description || item.releaseInfo || 'Open details, streams, and playback options.';
@@ -7263,8 +7328,12 @@ function createCard(item, kind) {
     }
 
     card.appendChild(poster);
+    if (progress) {
+        card.appendChild(progress);
+    }
     card.appendChild(title);
     card.appendChild(meta);
+
     if (!options.hideSynopsis) {
         card.appendChild(synopsis);
     }
@@ -7278,6 +7347,37 @@ function createCard(item, kind) {
     }
 
     return card;
+}
+
+function createContinueProgress(progress) {
+    var wrap = document.createElement('div');
+    var meta = document.createElement('div');
+    var current = document.createElement('span');
+    var remaining = document.createElement('span');
+    var rail = document.createElement('div');
+    var fill = document.createElement('div');
+
+    wrap.className = 'continue-progress';
+    wrap.setAttribute('aria-label', 'Resume progress: ' + progress.currentLabel + ' of ' + progress.durationLabel + ', ' + progress.remainingLabel);
+
+    meta.className = 'continue-progress-meta';
+    current.className = 'continue-progress-time';
+    current.textContent = progress.currentLabel;
+    remaining.className = 'continue-progress-remaining';
+    remaining.textContent = progress.remainingLabel;
+
+    rail.className = 'continue-progress-rail';
+    rail.setAttribute('aria-hidden', 'true');
+    fill.className = 'continue-progress-fill';
+    fill.style.width = progress.percent.toFixed(1) + '%';
+
+    meta.appendChild(current);
+    meta.appendChild(remaining);
+    rail.appendChild(fill);
+    wrap.appendChild(meta);
+    wrap.appendChild(rail);
+
+    return wrap;
 }
 
 function renderCards(containerId, items, kind) {
@@ -7295,6 +7395,7 @@ function renderHomeRailWindow(containerId, entries, key) {
     var previousEntry;
     var shouldShowPeek;
     var visible;
+    var useBackgroundForAllCards = key === 'continue';
 
     container.innerHTML = '';
     container.classList.add('rail-home-window');
@@ -7338,7 +7439,8 @@ function renderHomeRailWindow(containerId, entries, key) {
     visible.forEach(function(entry, visibleIndex) {
         container.appendChild(createCard(entry.item, entry.kind, {
             className: visibleIndex === 0 ? 'is-home-active' : 'is-home-compact',
-            imageUrl: visibleIndex === 0 ? (entry.item.background || entry.item.poster) : entry.item.poster,
+            imageUrl: (visibleIndex === 0 || useBackgroundForAllCards) ? (entry.item.background || entry.item.poster) : entry.item.poster,
+            continueProgress: entry.continueProgress,
             metaText: entry.metaText,
             eagerImage: visibleIndex === 0,
             showSynopsis: visibleIndex === 0
