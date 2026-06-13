@@ -1057,6 +1057,7 @@ body[data-current-view="player"] .content-row.is-row-far {
 
 .continue-progress-rail {
     position: relative;
+    box-sizing: border-box;
     height: 5px;
     border-radius: 0;
     overflow: hidden;
@@ -1070,12 +1071,20 @@ body[data-current-view="player"] .content-row.is-row-far {
     background: linear-gradient(90deg, rgba(255, 255, 255, 0.94) 0%, rgba(255, 255, 255, 0.72) 100%);
 }
 
+.card-media-stack {
+    position: relative;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    transition: transform 140ms cubic-bezier(0.22, 0.61, 0.36, 1), box-shadow 140ms ease;
+}
+
 #continueRail .card.card-has-progress {
     gap: 0;
 }
 
 #continueRail .card.is-home-active.card-has-progress .continue-progress {
-    margin-top: -3px;
+    margin-top: 0;
 }
 
 #continueRail .card.card-has-progress .card-title {
@@ -2094,20 +2103,8 @@ input:focus {
 }
 
 .rail-home-window .card .poster {
-    transition: transform 140ms cubic-bezier(0.22, 0.61, 0.36, 1), box-shadow 140ms ease, filter 140ms ease;
-}
-
-.rail-home-window .card .poster::after {
-    content: '';
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-    opacity: 0;
-    background:
-        linear-gradient(180deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0) 28%),
-        linear-gradient(0deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0) 34%);
-    box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.72);
-    transition: opacity 140ms ease;
+    box-sizing: border-box;
+    transition: transform 140ms cubic-bezier(0.22, 0.61, 0.36, 1), box-shadow 140ms ease;
 }
 
 .rail-home-window .card:last-child {
@@ -2120,32 +2117,18 @@ input:focus {
     min-width: 0;
 }
 
-.rail-home-window .card.is-home-active .poster {
+.content-row.is-row-current .rail-home-window .card.is-home-active:not(.card-has-progress) .poster {
     transform: translate3d(0, -3px, 0);
-    filter: brightness(1.06) saturate(1.03);
-    box-shadow: 0 22px 44px rgba(0, 0, 0, 0.32), 0 0 0 1px rgba(255, 255, 255, 0.18);
-}
-
-.rail-home-window .card.is-home-active .poster::after {
-    opacity: 1;
-}
-
-#continueRail .card.is-home-active.card-has-progress .poster::after {
     box-shadow:
-        inset 0 2px 0 rgba(255, 255, 255, 0.72),
-        inset 2px 0 0 rgba(255, 255, 255, 0.72),
-        inset -2px 0 0 rgba(255, 255, 255, 0.72);
+        0 0 0 3px #fff,
+        0 24px 48px rgba(0, 0, 0, 0.4);
 }
 
-#continueRail .card.is-home-active.card-has-progress .continue-progress-rail::after {
-    content: '';
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
+.content-row.is-row-current #continueRail .card.is-home-active.card-has-progress .card-media-stack {
+    transform: translate3d(0, -3px, 0);
     box-shadow:
-        inset 1.5px 0 0 rgba(255, 255, 255, 0.72),
-        inset -1.5px 0 0 rgba(255, 255, 255, 0.72),
-        inset 0 -1.5px 0 rgba(255, 255, 255, 0.72);
+        0 0 0 3px #fff,
+        0 24px 48px rgba(0, 0, 0, 0.4);
 }
 
 .rail-home-window .card.is-home-compact {

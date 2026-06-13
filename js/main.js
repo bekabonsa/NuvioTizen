@@ -173,6 +173,10 @@ var state = {
     playerFullscreen: false,
     currentView: 'home',
     viewHistory: [],
+    browseReturnState: {
+        movies: null,
+        series: null
+    },
     focusRegion: 'nav',
     navIndex: 1,
     mainRow: 0,
@@ -2741,7 +2745,7 @@ function getHomeRailDescriptors() {
     descriptors.push({
         key: 'movies',
         containerId: 'homeMovieRail',
-        entries: state.movies.slice(0, 18).map(function(item) {
+        entries: state.movies.slice(0, HOME_CATALOG_LIMIT).map(function(item) {
             return { item: item, kind: 'movie' };
         })
     });
@@ -2749,7 +2753,7 @@ function getHomeRailDescriptors() {
     descriptors.push({
         key: 'series',
         containerId: 'homeSeriesRail',
-        entries: state.series.slice(0, 18).map(function(item) {
+        entries: state.series.slice(0, HOME_CATALOG_LIMIT).map(function(item) {
             return { item: item, kind: 'series' };
         })
     });
@@ -2836,6 +2840,50 @@ function scrollActiveViewToTop() {
     if (activeView) {
         activeView.scrollTop = 0;
     }
+}
+
+function getViewPanel(viewName) {
+    return queryAll('[data-view-panel="' + viewName + '"]')[0] || null;
+}
+
+function isBrowseReturnView(viewName) {
+    return viewName === 'movies' || viewName === 'series';
+}
+
+function captureBrowseReturnState() {
+    var view = state.currentView;
+    var panel;
+
+    if (!isBrowseReturnView(view)) {
+        return;
+    }
+
+    panel = getViewPanel(view);
+    state.browseReturnState[view] = {
+        mainRow: state.mainRow,
+        mainCol: state.mainCol,
+        scrollTop: panel ? panel.scrollTop : 0
+    };
+}
+
+function restoreBrowseReturnState(viewName) {
+    var saved = state.browseReturnState[viewName];
+    var panel;
+
+    if (!saved) {
+        return false;
+    }
+
+    state.focusRegion = 'main';
+    state.mainRow = saved.mainRow || 0;
+    state.mainCol = saved.mainCol || 0;
+    panel = getViewPanel(viewName);
+    if (panel) {
+        panel.scrollTop = saved.scrollTop || 0;
+    }
+    updateRowEmphasis();
+
+    return true;
 }
 
 function scrollRowContainerIntoView(container) {
@@ -3010,6 +3058,7 @@ function setView(viewName, options) {
 
 function goBackOnce() {
     var previousView;
+    var shouldRestoreBrowse;
 
     if (state.playerFullscreen) {
         setPlayerFullscreen(false);
@@ -3038,12 +3087,21 @@ function goBackOnce() {
 
     if (state.currentView !== 'home') {
         previousView = state.viewHistory.length ? state.viewHistory.pop() : 'home';
+        shouldRestoreBrowse = isBrowseReturnView(previousView) && !!state.browseReturnState[previousView];
         setView(previousView || 'home', {
             focusRegion: 'main',
-            resetMain: true,
+            resetMain: !shouldRestoreBrowse,
             pushHistory: false
         });
-        setTimeout(focusCurrent, 0);
+        if (shouldRestoreBrowse) {
+            restoreBrowseReturnState(previousView);
+        }
+        setTimeout(function() {
+            if (shouldRestoreBrowse) {
+                restoreBrowseReturnState(previousView);
+            }
+            focusCurrent();
+        }, 0);
         return;
     }
 
@@ -7011,17 +7069,15 @@ function getCircularHomeWindow(entries, startIndex, count) {
     var windowItems = [];
     var total = entries.length;
     var visibleCount = Math.min(count, total);
-    var normalized = startIndex;
+    var normalized = Math.max(0, Math.min(startIndex || 0, Math.max(total - 1, 0)));
     var index = 0;
 
     if (!total) {
         return windowItems;
     }
 
-    normalized = ((normalized % total) + total) % total;
-
-    for (index = 0; index < visibleCount; index += 1) {
-        windowItems.push(entries[(normalized + index) % total]);
+    for (index = normalized; index < Math.min(total, normalized + visibleCount); index += 1) {
+        windowItems.push(entries[index]);
     }
 
     return windowItems;
@@ -7284,6 +7340,8 @@ function createCard(item, kind) {
     var meta = document.createElement('div');
     var synopsis = document.createElement('div');
     var progress;
+    var mediaStack;
+    var progressRail;
     var imageUrl = options.imageUrl || item.poster;
 
     card.className = 'card';
@@ -7329,9 +7387,18 @@ function createCard(item, kind) {
         }
     }
 
-    card.appendChild(poster);
     if (progress) {
+        progressRail = progress.querySelector('.continue-progress-rail');
+        mediaStack = document.createElement('div');
+        mediaStack.className = 'card-media-stack';
+        mediaStack.appendChild(poster);
+        if (progressRail) {
+            mediaStack.appendChild(progressRail);
+        }
+        card.appendChild(mediaStack);
         card.appendChild(progress);
+    } else {
+        card.appendChild(poster);
     }
     card.appendChild(title);
     card.appendChild(meta);
@@ -7414,7 +7481,7 @@ function renderHomeRailWindow(containerId, entries, key) {
         index = 0;
     }
     if (index >= entries.length) {
-        index = 0;
+        index = entries.length - 1;
     }
     state.homeRailIndices[key] = index;
 
@@ -7528,6 +7595,7 @@ function fetchMetaFromAddons(type, id) {
 }
 
 function prepareSelection(item, type, options) {
+    captureBrowseReturnState();
     state.selectedItem = item;
     state.selectedType = type;
     state.detailMode = 'details';
@@ -7921,13 +7989,13 @@ function handleLeft() {
         if (homeRailLeft) {
             if (state.homeRailIndices[homeRailLeft.key] > 0) {
                 state.homeRailIndices[homeRailLeft.key] -= 1;
-                state.homeRailMoveDirections[homeRailLeft.key] = 'right';
-                state.mainCol = 0;
-                renderSingleHomeRail(homeRailLeft);
-                focusCurrent();
-                return;
+            } else {
+                state.homeRailIndices[homeRailLeft.key] = Math.max(homeRailLeft.entries.length - 1, 0);
             }
-
+            state.homeRailMoveDirections[homeRailLeft.key] = 'right';
+            state.mainCol = 0;
+            renderSingleHomeRail(homeRailLeft);
+            focusCurrent();
             return;
         }
     }
