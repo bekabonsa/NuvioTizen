@@ -5370,6 +5370,9 @@ function renderBrowseGenreRows() {
 
         stack = document.createElement('div');
         stack.className = 'year-filter-stack';
+        if (!open) {
+            stack.classList.add('is-year-filter-collapsed');
+        }
         stack.setAttribute('data-year-filter-type', type);
 
         visibleOptions.forEach(function(option, index) {
@@ -5505,12 +5508,7 @@ function moveFocusedYearFilter(direction) {
     setYearFocusIndex(type, nextIndex);
 
     start = clampYearWindowStart(getYearWindowStart(type), yearOptions.length);
-    nextStart = start;
-    if (nextIndex < start) {
-        nextStart = nextIndex;
-    } else if (nextIndex >= start + YEAR_FILTER_WINDOW_SIZE) {
-        nextStart = nextIndex - YEAR_FILTER_WINDOW_SIZE + 1;
-    }
+    nextStart = clampYearWindowStart(nextIndex - Math.floor(YEAR_FILTER_WINDOW_SIZE / 2), yearOptions.length);
     nextStart = clampYearWindowStart(nextStart, yearOptions.length);
 
     if (nextStart !== start) {

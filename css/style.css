@@ -655,6 +655,10 @@ body[data-current-view="player"] .content-row.is-row-far {
     margin-bottom: 0;
 }
 
+.genre-chip-row > .genre-chip:not(.is-year-filter) {
+    margin-top: 38px;
+}
+
 .rail-continue {
     padding-top: 18px;
 }
@@ -750,8 +754,9 @@ body[data-current-view="player"] .content-row.is-row-far {
     position: relative;
     flex: 0 0 auto;
     margin-left: 22px;
+    margin-top: 38px;
     padding-left: 10px;
-    color: rgba(255, 255, 255, 0.42);
+    color: rgba(255, 255, 255, 0.66);
     font-size: 12px;
     font-weight: 700;
     line-height: 38px;
@@ -763,6 +768,11 @@ body[data-current-view="player"] .content-row.is-row-far {
     display: flex;
     flex-direction: column;
     gap: 4px;
+    min-height: 110px;
+}
+
+.year-filter-stack.is-year-filter-collapsed {
+    justify-content: center;
 }
 
 .year-filter-label::before {
