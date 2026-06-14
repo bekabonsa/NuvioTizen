@@ -27,6 +27,7 @@ var CINEMETA_SERIES_GENRES = ['Action', 'Adventure', 'Animation', 'Comedy', 'Dra
 var CINEMETA_SERIES_EXPANSION_GENRES = ['Action', 'Adventure', 'Animation', 'Comedy', 'Drama', 'Fantasy', 'Sci-Fi'];
 var CINEMETA_YEAR_FILTERS = buildDescendingYearList(2026, 1960);
 var CINEMETA_EXPANSION_YEAR_FILTERS = buildDescendingYearList(2026, 1960);
+var YEAR_FILTER_WINDOW_SIZE = 3;
 var CINEMETA_MOVIE_SEARCH_SEEDS = ['the', 'love', 'life', 'night', 'day', 'man', 'girl', 'dark', 'city', 'family', 'last', 'first', 'new', 'old', 'house', 'king', 'school', 'space', 'star', 'time', 'game', 'home'];
 var CINEMETA_SERIES_SEARCH_SEEDS = ['the', 'love', 'life', 'night', 'day', 'war', 'dark', 'city', 'family', 'first', 'new', 'old', 'house', 'queen', 'school', 'doctor', 'space', 'star', 'time', 'secret', 'story', 'game', 'home'];
 var NAV_VIEWS = ['search', 'home', 'library', 'series', 'movies', 'login'];
@@ -132,8 +133,12 @@ var state = {
     seriesBrowseLoadingMore: false,
     movieBrowseExpansionIndex: Math.floor(Math.random() * 1000),
     seriesBrowseExpansionIndex: Math.floor(Math.random() * 1000),
-    movieYearWheelIndex: 0,
-    seriesYearWheelIndex: 0,
+    movieYearWindowStart: 0,
+    seriesYearWindowStart: 0,
+    movieYearFilterOpen: false,
+    seriesYearFilterOpen: false,
+    movieYearFocusIndex: 0,
+    seriesYearFocusIndex: 0,
     searchQuery: '',
     searchScope: 'all',
     searchMovies: [],
@@ -2894,10 +2899,6 @@ function clampMainFocus(rows) {
 function scrollElementIntoView(el) {
     var parent = el ? el.parentNode : null;
 
-    if (parent && parent.classList && parent.classList.contains('year-wheel')) {
-        parent = parent.parentNode;
-    }
-
     if (parent && parent.classList && (
         parent.classList.contains('rail') ||
         parent.classList.contains('card-row') ||
@@ -4079,17 +4080,54 @@ function setBrowseExpansionIndex(type, index) {
     state.seriesBrowseExpansionIndex = index;
 }
 
-function getYearWheelIndex(type) {
-    return type === 'movie' ? state.movieYearWheelIndex : state.seriesYearWheelIndex;
+function getYearWindowStart(type) {
+    return type === 'movie' ? state.movieYearWindowStart : state.seriesYearWindowStart;
 }
 
-function setYearWheelIndex(type, index) {
+function setYearWindowStart(type, index) {
     if (type === 'movie') {
-        state.movieYearWheelIndex = index;
+        state.movieYearWindowStart = index;
         return;
     }
 
-    state.seriesYearWheelIndex = index;
+    state.seriesYearWindowStart = index;
+}
+
+function isYearFilterOpen(type) {
+    return type === 'movie' ? state.movieYearFilterOpen : state.seriesYearFilterOpen;
+}
+
+function setYearFilterOpen(type, open) {
+    if (type === 'movie') {
+        state.movieYearFilterOpen = !!open;
+        return;
+    }
+
+    state.seriesYearFilterOpen = !!open;
+}
+
+function getYearFocusIndex(type) {
+    return type === 'movie' ? state.movieYearFocusIndex : state.seriesYearFocusIndex;
+}
+
+function setYearFocusIndex(type, index) {
+    if (type === 'movie') {
+        state.movieYearFocusIndex = index;
+        return;
+    }
+
+    state.seriesYearFocusIndex = index;
+}
+
+function getCurrentBrowseType() {
+    if (state.currentView === 'movies') {
+        return 'movie';
+    }
+    if (state.currentView === 'series') {
+        return 'series';
+    }
+
+    return '';
 }
 
 function resetBrowsePaging(type) {
@@ -4103,107 +4141,68 @@ function isYearBrowseOption(option) {
     return option && option.filterGroup === 'year';
 }
 
-function getYearBrowseOptions(type) {
-    return getBrowseOptions(type).filter(isYearBrowseOption);
-}
+function getYearOptionIndex(yearOptions, key) {
+    var index = -1;
 
-function getActiveYearOption(yearOptions, activeKey) {
-    return yearOptions.filter(function(option) {
-        return option.key === activeKey;
-    })[0] || null;
-}
-
-function updateYearWheelDom(type) {
-    var wheel = queryAll('.year-wheel[data-year-wheel-type="' + type + '"]')[0];
-    var trigger = wheel ? queryAll('.year-wheel-trigger[data-year-wheel-type="' + type + '"]')[0] : null;
-    var yearOptions = getYearBrowseOptions(type);
-    var activeKey = getSelectedBrowseKey(type);
-    var selectedYear = getActiveYearOption(yearOptions, activeKey);
-    var activeIndex = Math.max(0, Math.min(getYearWheelIndex(type), Math.max(0, yearOptions.length - 1)));
-
-    if (!wheel || !trigger || !yearOptions.length) {
-        return;
-    }
-
-    setYearWheelIndex(type, activeIndex);
-    trigger.textContent = selectedYear ? selectedYear.label : 'All';
-    trigger.setAttribute('aria-label', selectedYear ? 'Year ' + selectedYear.label : 'Choose year');
-    trigger.classList.toggle('is-selected', !!selectedYear);
-
-    queryAll('.year-wheel-popover[data-year-wheel-type="' + type + '"] .year-wheel-option').forEach(function(optionButton) {
-        var optionIndex = Number(optionButton.getAttribute('data-year-index'));
-        var option = yearOptions[optionIndex];
-        var distance = optionIndex - activeIndex;
-        var absDistance = Math.abs(distance);
-        var translateY = distance * 34;
-        var opacity = absDistance === 0 ? 1 : (absDistance === 1 ? 0.72 : (absDistance === 2 ? 0.26 : 0));
-
-        optionButton.classList.toggle('is-wheel-active', absDistance === 0);
-        optionButton.classList.toggle('is-wheel-near', absDistance === 1);
-        optionButton.classList.toggle('is-wheel-edge', absDistance === 2);
-        optionButton.classList.toggle('is-selected', !!option && option.key === activeKey);
-        optionButton.style.opacity = String(opacity);
-        optionButton.style.pointerEvents = absDistance <= 2 ? 'auto' : 'none';
-        optionButton.style.transform = 'translate3d(0, calc(-50% + ' + translateY + 'px), 0)';
-    });
-
-    if (wheel.classList.contains('is-wheel-open')) {
-        updateYearWheelPosition(type);
-    }
-}
-
-function setYearWheelOpen(type, open) {
-    var wheel = queryAll('.year-wheel[data-year-wheel-type="' + type + '"]')[0];
-    var popover = queryAll('.year-wheel-popover[data-year-wheel-type="' + type + '"]')[0];
-
-    if (wheel) {
-        wheel.classList.toggle('is-wheel-open', !!open);
-    }
-    if (popover) {
-        popover.classList.toggle('is-wheel-open', !!open);
-    }
-    if (open) {
-        updateYearWheelPosition(type);
-    }
-}
-
-function updateYearWheelPosition(type) {
-    var wheel = queryAll('.year-wheel[data-year-wheel-type="' + type + '"]')[0];
-    var trigger = wheel ? queryAll('.year-wheel-trigger[data-year-wheel-type="' + type + '"]')[0] : null;
-    var popover = queryAll('.year-wheel-popover[data-year-wheel-type="' + type + '"]')[0];
-    var rect;
-    var left;
-    var top;
-    var width = 126;
-    var height = 174;
-    var margin = 18;
-
-    if (!trigger || !popover) {
-        return;
-    }
-
-    rect = trigger.getBoundingClientRect();
-    left = rect.left + rect.width / 2;
-    top = rect.top + rect.height / 2;
-    left = Math.max(margin + width / 2, Math.min(window.innerWidth - margin - width / 2, left));
-    top = Math.max(margin + height / 2, Math.min(window.innerHeight - margin - height / 2, top));
-
-    popover.style.left = Math.round(left) + 'px';
-    popover.style.top = Math.round(top) + 'px';
-}
-
-function updateOpenYearWheelPositions() {
-    queryAll('.year-wheel.is-wheel-open').forEach(function(wheel) {
-        updateYearWheelPosition(wheel.getAttribute('data-year-wheel-type'));
-    });
-}
-
-function removeYearWheelPopover(type) {
-    queryAll('.year-wheel-popover[data-year-wheel-type="' + type + '"]').forEach(function(popover) {
-        if (popover.parentNode) {
-            popover.parentNode.removeChild(popover);
+    (yearOptions || []).some(function(option, optionIndex) {
+        if (option && option.key === key) {
+            index = optionIndex;
+            return true;
         }
+
+        return false;
     });
+
+    return index;
+}
+
+function clampYearWindowStart(start, yearCount) {
+    var maxStart = Math.max(0, yearCount - YEAR_FILTER_WINDOW_SIZE);
+
+    return Math.max(0, Math.min(start, maxStart));
+}
+
+function getYearWindowStartForRender(type, yearOptions, activeKey) {
+    var activeIndex = getYearOptionIndex(yearOptions, activeKey);
+    var start = clampYearWindowStart(getYearWindowStart(type), yearOptions.length);
+
+    if (activeIndex >= 0 && (activeIndex < start || activeIndex >= start + YEAR_FILTER_WINDOW_SIZE)) {
+        start = clampYearWindowStart(activeIndex - Math.floor(YEAR_FILTER_WINDOW_SIZE / 2), yearOptions.length);
+        setYearWindowStart(type, start);
+    }
+
+    return start;
+}
+
+function getCollapsedYearIndex(type, yearOptions, activeKey) {
+    var activeIndex = getYearOptionIndex(yearOptions, activeKey);
+
+    if (activeIndex >= 0) {
+        return activeIndex;
+    }
+
+    return clampYearWindowStart(getYearWindowStart(type), yearOptions.length);
+}
+
+function focusYearFilter(type, yearIndex) {
+    var rowId = type === 'movie' ? 'movieGenreRow' : 'seriesGenreRow';
+    var nextButton = queryAll('#' + rowId + ' .is-year-filter[data-year-index="' + yearIndex + '"]')[0];
+    var row;
+    var nextCol;
+
+    if (!nextButton) {
+        return false;
+    }
+
+    row = queryAll('#' + rowId + ' .genre-chip');
+    nextCol = row.indexOf(nextButton);
+    if (nextCol >= 0) {
+        state.mainRow = 0;
+        state.mainCol = nextCol;
+    }
+    setYearFocusIndex(type, yearIndex);
+    focusCurrent();
+    return true;
 }
 
 function isCinemetaTopCatalog(option) {
@@ -5329,78 +5328,82 @@ function renderBrowseGenreRows() {
         return containerId === 'movieGenreRow' ? 'movie' : 'series';
     }
 
-    function clampYearWheelIndex(type, yearOptions, activeKey) {
-        var index = getYearWheelIndex(type);
-
-        index = Math.max(0, Math.min(index, Math.max(0, yearOptions.length - 1)));
-        setYearWheelIndex(type, index);
-        return index;
-    }
-
-    function renderYearWheel(container, type, yearOptions, activeKey, onSelect) {
-        var activeYear = getActiveYearOption(yearOptions, activeKey);
-        var activeIndex;
-        var wheel;
-        var trigger;
-        var popover;
+    function renderYearFilters(container, type, yearOptions, activeKey, onSelect) {
+        var label;
+        var stack;
+        var start;
+        var visibleOptions;
+        var open;
+        var collapsedIndex;
 
         if (!yearOptions.length) {
             return;
         }
 
-        removeYearWheelPopover(type);
-        activeIndex = clampYearWheelIndex(type, yearOptions, activeKey);
-        wheel = document.createElement('div');
-        wheel.className = 'year-wheel is-filter-group-start';
-        wheel.setAttribute('data-year-wheel-type', type);
-
-        trigger = document.createElement('button');
-        trigger.className = 'genre-chip year-wheel-trigger is-year-filter';
-        trigger.type = 'button';
-        trigger.setAttribute('tabindex', '-1');
-        trigger.setAttribute('data-year-wheel-type', type);
-        trigger.textContent = activeYear ? activeYear.label : 'All';
-        trigger.setAttribute('aria-label', activeYear ? 'Year ' + activeYear.label : 'Choose year');
-        if (activeYear) {
-            trigger.classList.add('is-selected');
+        open = isYearFilterOpen(type);
+        if (open) {
+            start = getYearWindowStartForRender(type, yearOptions, activeKey);
+            visibleOptions = yearOptions.slice(start, start + YEAR_FILTER_WINDOW_SIZE);
+        } else {
+            collapsedIndex = getCollapsedYearIndex(type, yearOptions, activeKey);
+            start = collapsedIndex;
+            visibleOptions = [yearOptions[collapsedIndex]];
         }
-        trigger.addEventListener('focus', function() {
-            setYearWheelOpen(type, true);
-        });
-        trigger.addEventListener('blur', function() {
-            setTimeout(function() {
-                if (document.activeElement !== trigger) {
-                    setYearWheelOpen(type, false);
+
+        label = document.createElement('span');
+        label.className = 'year-filter-label';
+        label.textContent = 'Year';
+        container.appendChild(label);
+
+        stack = document.createElement('div');
+        stack.className = 'year-filter-stack';
+        stack.setAttribute('data-year-filter-type', type);
+
+        visibleOptions.forEach(function(option, index) {
+            var button = document.createElement('button');
+            var optionIndex = start + index;
+
+            button.className = 'genre-chip is-year-filter';
+            button.type = 'button';
+            button.setAttribute('tabindex', '-1');
+            button.setAttribute('data-year-filter-type', type);
+            button.setAttribute('data-year-index', String(optionIndex));
+            button.setAttribute('data-year-total', String(yearOptions.length));
+            button.setAttribute('aria-expanded', open ? 'true' : 'false');
+            button.textContent = option.label;
+            button.setAttribute('aria-label', open ? 'Year ' + option.label : 'Choose year. Current ' + option.label);
+            if (option.key === activeKey) {
+                button.classList.add('is-selected');
+            }
+            if (!open) {
+                button.classList.add('is-year-collapsed');
+            }
+            if (open && optionIndex === start && start > 0) {
+                button.classList.add('is-year-window-edge');
+            }
+            if (open && optionIndex === start + visibleOptions.length - 1 && optionIndex < yearOptions.length - 1) {
+                button.classList.add('is-year-window-edge');
+            }
+            button.addEventListener('click', function() {
+                if (!isYearFilterOpen(type)) {
+                    setYearFocusIndex(type, optionIndex);
+                    setYearWindowStart(type, clampYearWindowStart(optionIndex - 1, yearOptions.length));
+                    setYearFilterOpen(type, true);
+                    renderBrowseGenreRows();
+                    focusYearFilter(type, optionIndex);
+                    return;
                 }
-            }, 0);
-        });
-        trigger.addEventListener('click', function() {
-            setYearWheelOpen(type, true);
-            onSelect(yearOptions[getYearWheelIndex(type)] || yearOptions[0]);
-        });
-        wheel.appendChild(trigger);
 
-        popover = document.createElement('div');
-        popover.className = 'year-wheel-popover';
-        popover.setAttribute('data-year-wheel-type', type);
-        yearOptions.forEach(function(option, index) {
-            var optionButton = document.createElement('button');
-
-            optionButton.className = 'year-wheel-option';
-            optionButton.type = 'button';
-            optionButton.setAttribute('tabindex', '-1');
-            optionButton.setAttribute('data-year-index', String(index));
-            optionButton.textContent = option.label;
-            optionButton.addEventListener('click', function() {
-                setYearWheelIndex(type, index);
-                setYearWheelOpen(type, true);
+                setYearFilterOpen(type, false);
+                setYearFocusIndex(type, optionIndex);
                 onSelect(option);
+                renderBrowseGenreRows();
+                focusYearFilter(type, optionIndex);
             });
-            popover.appendChild(optionButton);
+            stack.appendChild(button);
         });
-        container.appendChild(wheel);
-        document.body.appendChild(popover);
-        updateYearWheelDom(type);
+
+        container.appendChild(stack);
     }
 
     function renderRow(containerId, options, activeKey, onSelect) {
@@ -5428,12 +5431,13 @@ function renderBrowseGenreRows() {
             previousGroup = group;
             button.textContent = option.label;
             button.addEventListener('click', function() {
+                setYearFilterOpen(type, false);
                 onSelect(option);
             });
             container.appendChild(button);
         });
 
-        renderYearWheel(container, type, yearOptions, activeKey, onSelect);
+        renderYearFilters(container, type, yearOptions, activeKey, onSelect);
     }
 
     renderRow('movieGenreRow', state.movieGenres, state.selectedMovieGenre, function(option) {
@@ -5449,33 +5453,125 @@ function renderBrowseGenreRows() {
     });
 }
 
-function moveFocusedYearWheel(direction) {
+function moveFocusedYearFilter(direction) {
     var active = document.activeElement;
-    var type = active && active.getAttribute ? active.getAttribute('data-year-wheel-type') : '';
-    var yearOptions;
+    var type = active && active.getAttribute ? active.getAttribute('data-year-filter-type') : '';
+    var currentIndex;
     var nextIndex;
-    var nextTrigger;
+    var yearOptions;
+    var start;
+    var nextStart;
+    var rowId;
+    var nextButton;
+    var row;
+    var nextCol;
 
-    if (!type || !active.classList || !active.classList.contains('year-wheel-trigger')) {
+    if (!type) {
+        type = getCurrentBrowseType();
+    }
+    if (!type || !isYearFilterOpen(type)) {
         return false;
     }
 
-    yearOptions = getYearBrowseOptions(type);
-    if (!yearOptions.length) {
+    currentIndex = active && active.classList && active.classList.contains('is-year-filter')
+        ? Number(active.getAttribute('data-year-index'))
+        : getYearFocusIndex(type);
+    if (currentIndex !== currentIndex) {
+        currentIndex = getYearFocusIndex(type);
+    }
+
+    yearOptions = getBrowseOptions(type).filter(isYearBrowseOption);
+    nextIndex = currentIndex + direction;
+
+    if (!yearOptions.length || currentIndex !== currentIndex) {
+        return false;
+    }
+    if (nextIndex < 0 || nextIndex >= yearOptions.length) {
+        return true;
+    }
+    setYearFocusIndex(type, nextIndex);
+
+    start = clampYearWindowStart(getYearWindowStart(type), yearOptions.length);
+    nextStart = start;
+    if (nextIndex < start) {
+        nextStart = nextIndex;
+    } else if (nextIndex >= start + YEAR_FILTER_WINDOW_SIZE) {
+        nextStart = nextIndex - YEAR_FILTER_WINDOW_SIZE + 1;
+    }
+    nextStart = clampYearWindowStart(nextStart, yearOptions.length);
+
+    if (nextStart !== start) {
+        setYearWindowStart(type, nextStart);
+        renderBrowseGenreRows();
+    }
+
+    rowId = type === 'movie' ? 'movieGenreRow' : 'seriesGenreRow';
+    nextButton = queryAll('#' + rowId + ' .is-year-filter[data-year-index="' + nextIndex + '"]')[0];
+    if (!nextButton) {
+        return false;
+    }
+
+    row = queryAll('#' + rowId + ' .genre-chip');
+    nextCol = row.indexOf(nextButton);
+    if (nextCol >= 0) {
+        state.mainRow = 0;
+        state.mainCol = nextCol;
+    }
+    focusCurrent();
+    return true;
+}
+
+function exitFocusedYearFilter(direction) {
+    var active = document.activeElement;
+    var type = active && active.getAttribute ? active.getAttribute('data-year-filter-type') : '';
+    var rowId;
+    var row;
+    var currentCol;
+    var nextCol;
+
+    if (!type || !active.classList || !active.classList.contains('is-year-filter')) {
+        return false;
+    }
+
+    rowId = type === 'movie' ? 'movieGenreRow' : 'seriesGenreRow';
+    row = queryAll('#' + rowId + ' .genre-chip');
+    currentCol = row.indexOf(active);
+    if (currentCol < 0) {
+        return false;
+    }
+
+    if (direction < 0) {
+        setYearFilterOpen(type, false);
+        nextCol = currentCol - 1;
+        while (nextCol >= 0 && row[nextCol].classList.contains('is-year-filter')) {
+            nextCol -= 1;
+        }
+        if (nextCol >= 0) {
+            state.mainRow = 0;
+            state.mainCol = nextCol;
+            renderBrowseGenreRows();
+            focusCurrent();
+        } else {
+            renderBrowseGenreRows();
+            focusYearFilter(type, getCollapsedYearIndex(type, getBrowseOptions(type).filter(isYearBrowseOption), getSelectedBrowseKey(type)));
+        }
         return true;
     }
 
-    nextIndex = Math.max(0, Math.min(getYearWheelIndex(type) + direction, yearOptions.length - 1));
-    setYearWheelIndex(type, nextIndex);
-    setYearWheelOpen(type, true);
-    updateYearWheelDom(type);
-
-    nextTrigger = queryAll('.year-wheel-trigger[data-year-wheel-type="' + type + '"]')[0];
-    if (nextTrigger) {
-        nextTrigger.focus();
-        scrollElementIntoView(nextTrigger);
+    setYearFilterOpen(type, false);
+    nextCol = currentCol + 1;
+    while (nextCol < row.length && row[nextCol].classList.contains('is-year-filter')) {
+        nextCol += 1;
     }
-
+    if (nextCol < row.length) {
+        state.mainRow = 0;
+        state.mainCol = nextCol;
+        renderBrowseGenreRows();
+        focusCurrent();
+    } else {
+        renderBrowseGenreRows();
+        focusYearFilter(type, getCollapsedYearIndex(type, getBrowseOptions(type).filter(isYearBrowseOption), getSelectedBrowseKey(type)));
+    }
     return true;
 }
 
@@ -8368,6 +8464,10 @@ function handleLeft() {
         return;
     }
 
+    if (exitFocusedYearFilter(-1)) {
+        return;
+    }
+
     if (state.currentView === 'search') {
         var searchPaneInfo = getSearchPaneInfo();
         if (searchPaneInfo.resultRows && state.mainRow >= searchPaneInfo.firstResultRow && state.mainCol === 0) {
@@ -8441,6 +8541,10 @@ function handleRight() {
         return;
     }
 
+    if (exitFocusedYearFilter(1)) {
+        return;
+    }
+
     if (state.currentView === 'search') {
         var searchPaneInfo = getSearchPaneInfo();
         if (searchPaneInfo.resultRows && state.mainRow < searchPaneInfo.firstResultRow) {
@@ -8484,6 +8588,10 @@ function handleUp() {
         return;
     }
 
+    if (moveFocusedYearFilter(-1)) {
+        return;
+    }
+
     if (state.focusRegion === 'nav') {
         return;
     }
@@ -8515,6 +8623,10 @@ function handleDown() {
     }
 
     if (moveEpisodeBrowserVertical(1)) {
+        return;
+    }
+
+    if (moveFocusedYearFilter(1)) {
         return;
     }
 
@@ -8566,20 +8678,9 @@ function init() {
         });
     }
 
-    window.addEventListener('resize', updateOpenYearWheelPositions);
-
     document.addEventListener('keydown', function(event) {
         if (state.currentView === 'player' && state.playerFullscreen) {
             showPlayerChrome(false);
-        }
-
-        if (event.keyCode === 38 && moveFocusedYearWheel(-1)) {
-            event.preventDefault();
-            return;
-        }
-        if (event.keyCode === 40 && moveFocusedYearWheel(1)) {
-            event.preventDefault();
-            return;
         }
 
         switch (event.keyCode) {
