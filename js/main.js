@@ -6646,6 +6646,106 @@ function getSelectedEpisodeMainRow() {
     return getVisibleDetailActionRowCount() + episodeIndex;
 }
 
+function isEpisodeBrowserNavigationActive() {
+    return state.currentView === 'addons'
+        && state.detailMode === 'episodes'
+        && state.focusRegion === 'main';
+}
+
+function getEpisodeBrowserStartRow() {
+    return getVisibleDetailActionRowCount();
+}
+
+function getFocusedEpisodeIndex() {
+    return queryAll('#episodeRail .episode-card').filter(isVisibleControl).indexOf(document.activeElement);
+}
+
+function getFocusedSeasonIndex() {
+    return queryAll('#seasonRail .season-chip').filter(isVisibleControl).indexOf(document.activeElement);
+}
+
+function focusEpisodeBrowserEpisode(index) {
+    var episodes = queryAll('#episodeRail .episode-card').filter(isVisibleControl);
+    var seasons = queryAll('#seasonRail .season-chip').filter(isVisibleControl);
+    var safeIndex;
+
+    if (!episodes.length) {
+        return false;
+    }
+
+    safeIndex = Math.max(0, Math.min(index, episodes.length - 1));
+    state.mainRow = getEpisodeBrowserStartRow() + safeIndex;
+    state.mainCol = seasons[safeIndex] ? 1 : 0;
+    focusCurrent();
+    return true;
+}
+
+function focusEpisodeBrowserSeason(index) {
+    var seasons = queryAll('#seasonRail .season-chip').filter(isVisibleControl);
+    var safeIndex;
+
+    if (!seasons.length) {
+        return false;
+    }
+
+    safeIndex = Math.max(0, Math.min(index, seasons.length - 1));
+    state.mainRow = getEpisodeBrowserStartRow() + safeIndex;
+    state.mainCol = 0;
+    focusCurrent();
+    return true;
+}
+
+function moveEpisodeBrowserVertical(direction) {
+    var episodeIndex;
+    var seasonIndex;
+    var targetIndex;
+
+    if (!isEpisodeBrowserNavigationActive()) {
+        return false;
+    }
+
+    episodeIndex = getFocusedEpisodeIndex();
+    if (episodeIndex !== -1) {
+        targetIndex = episodeIndex + direction;
+        if (targetIndex >= 0 && targetIndex < state.selectedEpisodes.length) {
+            return focusEpisodeBrowserEpisode(targetIndex);
+        }
+        return false;
+    }
+
+    seasonIndex = getFocusedSeasonIndex();
+    if (seasonIndex !== -1) {
+        targetIndex = seasonIndex + direction;
+        if (targetIndex >= 0 && targetIndex < state.availableSeasons.length) {
+            return focusEpisodeBrowserSeason(targetIndex);
+        }
+        return false;
+    }
+
+    return false;
+}
+
+function moveEpisodeBrowserHorizontal(direction) {
+    var episodeIndex;
+    var seasonIndex;
+
+    if (!isEpisodeBrowserNavigationActive()) {
+        return false;
+    }
+
+    episodeIndex = getFocusedEpisodeIndex();
+    if (direction < 0 && episodeIndex !== -1) {
+        return focusEpisodeBrowserSeason(episodeIndex);
+    }
+
+    seasonIndex = getFocusedSeasonIndex();
+    if (direction > 0 && seasonIndex !== -1) {
+        return focusEpisodeBrowserEpisode(seasonIndex);
+    }
+
+    return false;
+}
+
 function applyDetailMode() {
     var hasSelection = !!state.selectedItem;
     var isSeries = state.selectedType === 'series';
@@ -8193,6 +8293,10 @@ function handleLeft() {
         return;
     }
 
+    if (moveEpisodeBrowserHorizontal(-1)) {
+        return;
+    }
+
     if (state.currentView === 'search') {
         var searchPaneInfo = getSearchPaneInfo();
         if (searchPaneInfo.resultRows && state.mainRow >= searchPaneInfo.firstResultRow && state.mainCol === 0) {
@@ -8262,6 +8366,10 @@ function handleRight() {
         return;
     }
 
+    if (moveEpisodeBrowserHorizontal(1)) {
+        return;
+    }
+
     if (state.currentView === 'search') {
         var searchPaneInfo = getSearchPaneInfo();
         if (searchPaneInfo.resultRows && state.mainRow < searchPaneInfo.firstResultRow) {
@@ -8301,6 +8409,10 @@ function handleUp() {
         return;
     }
 
+    if (moveEpisodeBrowserVertical(-1)) {
+        return;
+    }
+
     if (state.focusRegion === 'nav') {
         return;
     }
@@ -8328,6 +8440,10 @@ function handleDown() {
         state.mainRow = 0;
         state.mainCol = 0;
         focusCurrent();
+        return;
+    }
+
+    if (moveEpisodeBrowserVertical(1)) {
         return;
     }
 
