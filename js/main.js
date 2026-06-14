@@ -6745,9 +6745,6 @@ function renderEpisodeRail() {
         button.className = 'episode-card';
         button.type = 'button';
         button.setAttribute('tabindex', '-1');
-        if (state.selectedVideo && state.selectedVideo.id === video.id) {
-            button.classList.add('is-selected');
-        }
 
         thumb.className = 'episode-thumb';
         if (imageUrl) {

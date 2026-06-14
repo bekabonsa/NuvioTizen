@@ -1332,10 +1332,6 @@ body[data-current-view="player"] .content-row.is-row-far {
     text-align: left;
 }
 
-.episode-card.is-selected {
-    border-color: rgba(255, 255, 255, 0.78);
-}
-
 .episode-thumb {
     position: relative;
     flex: 0 0 360px;
