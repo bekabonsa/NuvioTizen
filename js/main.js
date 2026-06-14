@@ -4130,15 +4130,13 @@ function updateYearWheelDom(type) {
     trigger.setAttribute('aria-label', selectedYear ? 'Year ' + selectedYear.label : 'Choose year');
     trigger.classList.toggle('is-selected', !!selectedYear);
 
-    queryAll('.year-wheel[data-year-wheel-type="' + type + '"] .year-wheel-option').forEach(function(optionButton) {
+    queryAll('.year-wheel-popover[data-year-wheel-type="' + type + '"] .year-wheel-option').forEach(function(optionButton) {
         var optionIndex = Number(optionButton.getAttribute('data-year-index'));
         var option = yearOptions[optionIndex];
         var distance = optionIndex - activeIndex;
         var absDistance = Math.abs(distance);
         var translateY = distance * 34;
-        var rotateX = distance * -22;
-        var scale = absDistance === 0 ? 1.12 : (absDistance === 1 ? 0.96 : 0.84);
-        var opacity = absDistance === 0 ? 1 : (absDistance === 1 ? 0.72 : (absDistance === 2 ? 0.34 : 0));
+        var opacity = absDistance === 0 ? 1 : (absDistance === 1 ? 0.72 : (absDistance === 2 ? 0.26 : 0));
 
         optionButton.classList.toggle('is-wheel-active', absDistance === 0);
         optionButton.classList.toggle('is-wheel-near', absDistance === 1);
@@ -4146,7 +4144,65 @@ function updateYearWheelDom(type) {
         optionButton.classList.toggle('is-selected', !!option && option.key === activeKey);
         optionButton.style.opacity = String(opacity);
         optionButton.style.pointerEvents = absDistance <= 2 ? 'auto' : 'none';
-        optionButton.style.transform = 'translate3d(0, calc(-50% + ' + translateY + 'px), ' + (-absDistance * 22) + 'px) rotateX(' + rotateX + 'deg) scale(' + scale + ')';
+        optionButton.style.transform = 'translate3d(0, calc(-50% + ' + translateY + 'px), 0)';
+    });
+
+    if (wheel.classList.contains('is-wheel-open')) {
+        updateYearWheelPosition(type);
+    }
+}
+
+function setYearWheelOpen(type, open) {
+    var wheel = queryAll('.year-wheel[data-year-wheel-type="' + type + '"]')[0];
+    var popover = queryAll('.year-wheel-popover[data-year-wheel-type="' + type + '"]')[0];
+
+    if (wheel) {
+        wheel.classList.toggle('is-wheel-open', !!open);
+    }
+    if (popover) {
+        popover.classList.toggle('is-wheel-open', !!open);
+    }
+    if (open) {
+        updateYearWheelPosition(type);
+    }
+}
+
+function updateYearWheelPosition(type) {
+    var wheel = queryAll('.year-wheel[data-year-wheel-type="' + type + '"]')[0];
+    var trigger = wheel ? queryAll('.year-wheel-trigger[data-year-wheel-type="' + type + '"]')[0] : null;
+    var popover = queryAll('.year-wheel-popover[data-year-wheel-type="' + type + '"]')[0];
+    var rect;
+    var left;
+    var top;
+    var width = 126;
+    var height = 174;
+    var margin = 18;
+
+    if (!trigger || !popover) {
+        return;
+    }
+
+    rect = trigger.getBoundingClientRect();
+    left = rect.left + rect.width / 2;
+    top = rect.top + rect.height / 2;
+    left = Math.max(margin + width / 2, Math.min(window.innerWidth - margin - width / 2, left));
+    top = Math.max(margin + height / 2, Math.min(window.innerHeight - margin - height / 2, top));
+
+    popover.style.left = Math.round(left) + 'px';
+    popover.style.top = Math.round(top) + 'px';
+}
+
+function updateOpenYearWheelPositions() {
+    queryAll('.year-wheel.is-wheel-open').forEach(function(wheel) {
+        updateYearWheelPosition(wheel.getAttribute('data-year-wheel-type'));
+    });
+}
+
+function removeYearWheelPopover(type) {
+    queryAll('.year-wheel-popover[data-year-wheel-type="' + type + '"]').forEach(function(popover) {
+        if (popover.parentNode) {
+            popover.parentNode.removeChild(popover);
+        }
     });
 }
 
@@ -5292,6 +5348,7 @@ function renderBrowseGenreRows() {
             return;
         }
 
+        removeYearWheelPopover(type);
         activeIndex = clampYearWheelIndex(type, yearOptions, activeKey);
         wheel = document.createElement('div');
         wheel.className = 'year-wheel is-filter-group-start';
@@ -5307,13 +5364,25 @@ function renderBrowseGenreRows() {
         if (activeYear) {
             trigger.classList.add('is-selected');
         }
+        trigger.addEventListener('focus', function() {
+            setYearWheelOpen(type, true);
+        });
+        trigger.addEventListener('blur', function() {
+            setTimeout(function() {
+                if (document.activeElement !== trigger) {
+                    setYearWheelOpen(type, false);
+                }
+            }, 0);
+        });
         trigger.addEventListener('click', function() {
+            setYearWheelOpen(type, true);
             onSelect(yearOptions[getYearWheelIndex(type)] || yearOptions[0]);
         });
         wheel.appendChild(trigger);
 
         popover = document.createElement('div');
         popover.className = 'year-wheel-popover';
+        popover.setAttribute('data-year-wheel-type', type);
         yearOptions.forEach(function(option, index) {
             var optionButton = document.createElement('button');
 
@@ -5324,12 +5393,13 @@ function renderBrowseGenreRows() {
             optionButton.textContent = option.label;
             optionButton.addEventListener('click', function() {
                 setYearWheelIndex(type, index);
+                setYearWheelOpen(type, true);
                 onSelect(option);
             });
             popover.appendChild(optionButton);
         });
-        wheel.appendChild(popover);
         container.appendChild(wheel);
+        document.body.appendChild(popover);
         updateYearWheelDom(type);
     }
 
@@ -5397,6 +5467,7 @@ function moveFocusedYearWheel(direction) {
 
     nextIndex = Math.max(0, Math.min(getYearWheelIndex(type) + direction, yearOptions.length - 1));
     setYearWheelIndex(type, nextIndex);
+    setYearWheelOpen(type, true);
     updateYearWheelDom(type);
 
     nextTrigger = queryAll('.year-wheel-trigger[data-year-wheel-type="' + type + '"]')[0];
@@ -8494,6 +8565,8 @@ function init() {
             timestamp: new Date().toISOString()
         });
     }
+
+    window.addEventListener('resize', updateOpenYearWheelPositions);
 
     document.addEventListener('keydown', function(event) {
         if (state.currentView === 'player' && state.playerFullscreen) {
