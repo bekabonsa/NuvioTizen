@@ -4174,6 +4174,19 @@ function getYearWindowStartForRender(type, yearOptions, activeKey) {
     return start;
 }
 
+function getOpenYearWindowStartForRender(type, yearOptions) {
+    var focusIndex = Math.max(0, Math.min(getYearFocusIndex(type), Math.max(0, yearOptions.length - 1)));
+    var start = clampYearWindowStart(getYearWindowStart(type), yearOptions.length);
+
+    setYearFocusIndex(type, focusIndex);
+    if (focusIndex < start || focusIndex >= start + YEAR_FILTER_WINDOW_SIZE) {
+        start = clampYearWindowStart(focusIndex - Math.floor(YEAR_FILTER_WINDOW_SIZE / 2), yearOptions.length);
+        setYearWindowStart(type, start);
+    }
+
+    return start;
+}
+
 function getCollapsedYearIndex(type, yearOptions, activeKey) {
     var activeIndex = getYearOptionIndex(yearOptions, activeKey);
 
@@ -5342,7 +5355,7 @@ function renderBrowseGenreRows() {
 
         open = isYearFilterOpen(type);
         if (open) {
-            start = getYearWindowStartForRender(type, yearOptions, activeKey);
+            start = getOpenYearWindowStartForRender(type, yearOptions);
             visibleOptions = yearOptions.slice(start, start + YEAR_FILTER_WINDOW_SIZE);
         } else {
             collapsedIndex = getCollapsedYearIndex(type, yearOptions, activeKey);
@@ -5508,7 +5521,9 @@ function moveFocusedYearFilter(direction) {
     rowId = type === 'movie' ? 'movieGenreRow' : 'seriesGenreRow';
     nextButton = queryAll('#' + rowId + ' .is-year-filter[data-year-index="' + nextIndex + '"]')[0];
     if (!nextButton) {
-        return false;
+        renderBrowseGenreRows();
+        focusYearFilter(type, nextIndex);
+        return true;
     }
 
     row = queryAll('#' + rowId + ' .genre-chip');
