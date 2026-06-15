@@ -16,7 +16,15 @@ The app includes:
 
 - [`index.html`](index.html): app shell and all view markup
 - [`css/style.css`](css/style.css): TV layout, navigation, player, login, and spotlight styling
-- [`js/main.js`](js/main.js): application state, navigation, auth, catalogs, playback, subtitles, and TV input handling
+- [`js/config-state.js`](js/config-state.js): constants, shared state, caches, and typedefs
+- [`js/platform-dom.js`](js/platform-dom.js): DOM helpers, request scheduling, storage normalization, and small shared utilities
+- [`js/player.js`](js/player.js): playback metrics, tracks, subtitles, AVPlay/HTML5 player control, and player chrome
+- [`js/navigation-focus.js`](js/navigation-focus.js): views, TV focus registry, remote navigation, home spotlight, and browse return state
+- [`js/catalogs-addons.js`](js/catalogs-addons.js): addon/catalog option modeling, catalog URL building, browse paging, request helpers, and prefetch
+- [`js/auth-sync.js`](js/auth-sync.js): Nuvio/Supabase auth, QR login, synced watch/library data, addon loading, and browse rendering glue
+- [`js/detail-streams.js`](js/detail-streams.js): detail pages, seasons/episodes, streams, stream loading, and selection flow
+- [`js/search-rendering.js`](js/search-rendering.js): search keyboard/results and shared card/rail rendering
+- [`js/main.js`](js/main.js): app bootstrap, bindings, and TV key input handling
 - [`config.xml`](config.xml): Tizen widget manifest and privileges
 - [`images/`](images): logos and app icons
 - [`NuvioTizen.wgt`](NuvioTizen.wgt): packaged widget artifact when built
@@ -34,7 +42,19 @@ This repo does not use a Node build system. The runtime app is plain static web 
 Syntax check:
 
 ```sh
-node --check js/main.js
+for f in js/*.js; do node --check "$f"; done
+```
+
+Pure logic tests:
+
+```sh
+node tests/pure.test.js
+```
+
+Optional local browser smoke test:
+
+```sh
+node tests/browser-smoke.js
 ```
 
 Build the web app:
@@ -60,9 +80,9 @@ cp ./.buildResult/*.wgt ./
 ## Runtime Notes
 
 - The app is configured as a Tizen TV widget in [`config.xml`](config.xml).
-- Main remote-navigation behavior is implemented in [`js/main.js`](js/main.js).
+- Main remote-navigation behavior is implemented in [`js/navigation-focus.js`](js/navigation-focus.js) and wired in [`js/main.js`](js/main.js).
 - Spotlight, browse rails, login, and player UI are styled in [`css/style.css`](css/style.css).
-- The app currently uses Supabase and Nuvio endpoints configured directly in [`js/main.js`](js/main.js).
+- The app currently uses Supabase and Nuvio endpoints configured in [`js/config-state.js`](js/config-state.js).
 
 ## Current Output
 
