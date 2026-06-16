@@ -154,11 +154,55 @@ function testBrowsePaging() {
   assert.deepStrictEqual(sandbox.trimToFullBrowseRows([1, 2, 3, 4, 5, 6, 7]), [1, 2, 3, 4, 5]);
 }
 
+function testDtsVirtualAudioDetection() {
+  const cases = [
+    ['Movie DTS-HD MA5.1', 'DTS-HD MA 5.1 (detected, not exposed by TV)'],
+    ['Movie DTS-HD MA 5.1', 'DTS-HD MA 5.1 (detected, not exposed by TV)'],
+    ['Movie DTS:X 7.1', 'DTS:X 7.1 (detected, not exposed by TV)'],
+    ['Movie DTS', 'DTS (detected, not exposed by TV)']
+  ];
+
+  cases.forEach(([title, expectedLabel]) => {
+    const tracks = sandbox.detectVirtualAudioTracks({ title, raw: {} }, []);
+    assert.strictEqual(tracks.length, 1);
+    assert.strictEqual(tracks[0].label, expectedLabel);
+    assert.strictEqual(tracks[0].virtual, true);
+  });
+
+  assert.strictEqual(
+    sandbox.detectVirtualAudioTracks({ title: 'Movie AAC 5.1', raw: {} }, []).length,
+    0
+  );
+  assert.strictEqual(
+    sandbox.detectVirtualAudioTracks(
+      { title: 'Movie DTS-HD MA5.1', raw: {} },
+      [{ id: 'audio-0', label: 'ENG • DTS-HD MA 5.1' }]
+    ).length,
+    0
+  );
+  assert.strictEqual(
+    sandbox.detectVirtualAudioTracks(
+      { title: 'Movie DTS-HD MA5.1', raw: {} },
+      [{ id: 'audio-0', label: 'English', codec: 'DTS-HD MA' }]
+    ).length,
+    0
+  );
+
+  assert.strictEqual(
+    sandbox.detectVirtualAudioTracks(
+      { title: 'Movie DTS-HD MA5.1', raw: {} },
+      [{ id: 'audio-1', index: 1, label: 'EN', codec: '' }]
+    ).length,
+    1
+  );
+}
+
 [
   testSubtitleParsing,
   testContinueDedupe,
   testCatalogSelectionAndUrls,
-  testBrowsePaging
+  testBrowsePaging,
+  testDtsVirtualAudioDetection
 ].forEach((testFn) => testFn());
 
 console.log('pure tests passed');

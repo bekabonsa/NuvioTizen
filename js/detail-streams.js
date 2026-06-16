@@ -876,14 +876,21 @@ function startHtml5Stream(url) {
     playPromise = video.play();
     if (playPromise && typeof playPromise.then === 'function') {
         playPromise.then(function() {
+            state.suppressNextHtml5AbortDiagnostic = false;
             setPlayerStatus('Playing (HTML5)');
             setPlayerToggleUi(true);
             readHtml5Metrics();
             startPlaybackTicker();
             scheduleTrackRefresh();
         }).catch(function(error) {
+            if (state.suppressNextHtml5AbortDiagnostic && error && error.name === 'AbortError') {
+                state.suppressNextHtml5AbortDiagnostic = false;
+                return;
+            }
+            state.suppressNextHtml5AbortDiagnostic = false;
             setPlayerStatus('Play blocked: ' + error.message);
             setPlayerToggleUi(false);
+            appendPlayerDiagnostic('error', 'HTML5 play failed', error);
         });
     } else {
         setPlayerToggleUi(true);
@@ -895,6 +902,7 @@ function startAvplayStream(url) {
     var surface = byId('avplaySurface');
 
     if (!hasAvplay()) {
+        appendPlayerDiagnostic('warn', 'AVPlay is unavailable, using HTML5', getUrlFilename(url) || url);
         startHtml5Stream(url);
         return;
     }
@@ -906,7 +914,9 @@ function startAvplayStream(url) {
     state.playerMode = 'avplay';
 
     try {
+        appendPlayerDiagnostic('info', 'Opening stream with AVPlay', getUrlFilename(url) || url);
         webapis.avplay.open(url);
+        appendPlayerDiagnostic('success', 'AVPlay open accepted', getUrlFilename(url) || url);
         webapis.avplay.setListener({
             onbufferingstart: function() {
                 setPlayerStatus('Buffering (AVPlay)');
@@ -930,6 +940,7 @@ function startAvplayStream(url) {
             onerror: function(error) {
                 setPlayerToggleUi(false);
                 setPlayerStatus('AVPlay error: ' + error);
+                appendPlayerDiagnostic('error', 'AVPlay runtime error', error);
                 startHtml5Stream(url);
             }
         });
@@ -943,22 +954,26 @@ function startAvplayStream(url) {
                 webapis.avplay.play();
                 setPlayerStatus('Playing (AVPlay)');
                 setPlayerToggleUi(true);
+                appendPlayerDiagnostic('success', 'AVPlay playback started', getUrlFilename(url) || url);
                 readAvplayMetrics();
                 startPlaybackTicker();
                 scheduleTrackRefresh();
             } catch (playError) {
                 setPlayerToggleUi(false);
                 setPlayerStatus('AVPlay play failed');
+                appendPlayerDiagnostic('error', 'AVPlay play failed', playError);
                 startHtml5Stream(url);
             }
         }, function(error) {
             setPlayerToggleUi(false);
             setPlayerStatus('AVPlay prepare failed');
+            appendPlayerDiagnostic('error', 'AVPlay prepare failed', error);
             startHtml5Stream(url);
         });
     } catch (error) {
         setPlayerToggleUi(false);
         setPlayerStatus('AVPlay unavailable, using HTML5');
+        appendPlayerDiagnostic('error', 'AVPlay open failed', error);
         startHtml5Stream(url);
     }
 }
@@ -1024,6 +1039,7 @@ function loadCurrentStream() {
 
 function openStream(streamEntry) {
     resetTrackState();
+    clearPlayerDiagnostics();
     state.currentStream = streamEntry;
     trackContinueWatching(state.selectedItem, state.selectedType, state.selectedVideo);
     renderContinueWatching();

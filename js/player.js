@@ -25,6 +25,253 @@ function safeJsonParse(value) {
     }
 }
 
+function formatDiagnosticDetails(details) {
+    var parts = [];
+    var keys;
+
+    if (!details) {
+        return '';
+    }
+
+    if (typeof details === 'string') {
+        return details;
+    }
+
+    if (details.name) {
+        parts.push('name=' + details.name);
+    }
+    if (details.message) {
+        parts.push('message=' + details.message);
+    }
+    if (details.code || details.code === 0) {
+        parts.push('code=' + details.code);
+    }
+    if (details.errorType) {
+        parts.push('type=' + details.errorType);
+    }
+
+    if (parts.length) {
+        return parts.join(', ');
+    }
+
+    keys = Object.keys(details);
+    if (keys.length) {
+        try {
+            return JSON.stringify(details);
+        } catch (error) {
+            return String(details);
+        }
+    }
+
+    return String(details);
+}
+
+function getDiagnosticTimestamp() {
+    return new Date().toLocaleTimeString([], {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+    });
+}
+
+function renderPlaybackDiagnostics() {
+    var count = byId('playerDiagnosticsCount');
+    var list = byId('playerDiagnosticsList');
+    var diagnostics = state.playbackDiagnostics || [];
+    var fragment = document.createDocumentFragment();
+
+    count.textContent = String(diagnostics.length) + ' event' + (diagnostics.length === 1 ? '' : 's');
+    list.innerHTML = '';
+
+    if (!diagnostics.length) {
+        var empty = document.createElement('p');
+        empty.className = 'player-diagnostics-empty';
+        empty.textContent = 'No playback diagnostics yet.';
+        list.appendChild(empty);
+        return;
+    }
+
+    diagnostics.forEach(function(entry) {
+        var item = document.createElement('p');
+        var time = document.createElement('span');
+        item.className = 'player-diagnostic-entry is-' + entry.level;
+        time.className = 'player-diagnostic-time';
+        time.textContent = '[' + entry.time + '] ';
+        item.appendChild(time);
+        item.appendChild(document.createTextNode(entry.message + (entry.details ? ' - ' + entry.details : '')));
+        fragment.appendChild(item);
+    });
+
+    list.appendChild(fragment);
+    list.scrollTop = list.scrollHeight;
+}
+
+function clearPlayerDiagnostics() {
+    state.playbackDiagnostics = [];
+    state.playbackDiagnosticKeys = {};
+    state.audioTrackFailures = {};
+    renderPlaybackDiagnostics();
+}
+
+function appendPlayerDiagnostic(level, message, details) {
+    state.playbackDiagnostics = state.playbackDiagnostics || [];
+    state.playbackDiagnostics.push({
+        level: level || 'info',
+        time: getDiagnosticTimestamp(),
+        message: message,
+        details: formatDiagnosticDetails(details)
+    });
+
+    if (state.playbackDiagnostics.length > 50) {
+        state.playbackDiagnostics = state.playbackDiagnostics.slice(state.playbackDiagnostics.length - 50);
+    }
+
+    renderPlaybackDiagnostics();
+
+    if (level === 'error') {
+        setPlayerStatus(message);
+    }
+}
+
+function appendPlayerDiagnosticOnce(key, level, message, details) {
+    state.playbackDiagnosticKeys = state.playbackDiagnosticKeys || {};
+    if (state.playbackDiagnosticKeys[key]) {
+        return;
+    }
+    state.playbackDiagnosticKeys[key] = true;
+    appendPlayerDiagnostic(level, message, details);
+}
+
+function getUrlFilename(value) {
+    var filename = String(value || '').split('#')[0].split('?')[0].split('/').pop();
+
+    try {
+        return decodeURIComponent(filename);
+    } catch (error) {
+        return filename;
+    }
+}
+
+function detectDtsAudioDetailsFromText(value) {
+    var text = String(value || '').replace(/\+/g, ' ');
+    var hasDts = /(^|[^a-z0-9])dts([^a-z0-9]|$)/i.test(text)
+        || /dts[\s._-]*(?:hd|x|:)/i.test(text);
+    var codec = 'DTS';
+    var channelMatch;
+    var channels = '';
+
+    if (!hasDts) {
+        return null;
+    }
+
+    if (/dts[\s._-]*:?[\s._-]*x/i.test(text)) {
+        codec = 'DTS:X';
+    } else if (/dts[\s._-]*hd[\s._-]*(?:ma|master[\s._-]*audio)/i.test(text)) {
+        codec = 'DTS-HD MA';
+    } else if (/dts[\s._-]*hd/i.test(text)) {
+        codec = 'DTS-HD';
+    }
+
+    channelMatch = text.match(/(?:^|[^0-9])([257])[\s._-]*[.:][\s._-]*1(?:[^0-9]|$)/);
+    if (channelMatch) {
+        channels = channelMatch[1] + '.1';
+    }
+
+    return {
+        codec: codec,
+        channels: channels,
+        label: codec + (channels ? ' ' + channels : '')
+    };
+}
+
+function getDtsAudioScore(details) {
+    if (!details) {
+        return 0;
+    }
+    if (details.codec === 'DTS:X') {
+        return 4;
+    }
+    if (details.codec === 'DTS-HD MA') {
+        return 3;
+    }
+    if (details.codec === 'DTS-HD') {
+        return 2;
+    }
+    return 1;
+}
+
+function chooseBetterDtsAudioDetails(current, candidate) {
+    var currentScore = getDtsAudioScore(current);
+    var candidateScore = getDtsAudioScore(candidate);
+
+    if (!candidate) {
+        return current;
+    }
+    if (!current) {
+        return candidate;
+    }
+    if (candidateScore > currentScore) {
+        return candidate;
+    }
+    if (candidateScore === currentScore && !current.channels && candidate.channels) {
+        return candidate;
+    }
+    return current;
+}
+
+function detectDtsAudioDetails(streamEntry) {
+    var stream = streamEntry && streamEntry.raw ? streamEntry.raw : {};
+    var values = [];
+    var best = null;
+
+    if (streamEntry) {
+        values.push(streamEntry.title);
+        values.push(streamEntry.description);
+    }
+
+    values.push(stream.name);
+    values.push(stream.title);
+    values.push(stream.description);
+    values.push(stream.filename);
+    values.push(getUrlFilename(stream.url));
+
+    values.forEach(function(value) {
+        best = chooseBetterDtsAudioDetails(best, detectDtsAudioDetailsFromText(value));
+    });
+
+    return best;
+}
+
+function isDtsAudioText(value) {
+    return !!detectDtsAudioDetailsFromText(value);
+}
+
+function detectVirtualAudioTracks(streamEntry, realTracks) {
+    var details = detectDtsAudioDetails(streamEntry);
+    var tracks = realTracks || [];
+    var hasRealDtsTrack = tracks.some(function(track) {
+        return isDtsAudioText([
+            track.label,
+            track.name,
+            track.codec
+        ].join(' '));
+    });
+    var trackId = 'audio-virtual-dts';
+
+    if (!details || hasRealDtsTrack) {
+        return [];
+    }
+
+    return [{
+        id: trackId,
+        index: null,
+        kind: 'virtual',
+        virtual: true,
+        failed: !!(state.audioTrackFailures && state.audioTrackFailures[trackId]),
+        label: details.label + ' (detected, not exposed by TV)'
+    }];
+}
+
 function normalizeTrackLabel(type, info, index) {
     var language = '';
     var codec = '';
@@ -438,10 +685,21 @@ function getPreferredSubtitleTracks() {
     return state.externalSubtitleTracks.concat(state.subtitleTracks);
 }
 
+function getSelectableAudioTracks() {
+    var tracks = (state.audioTracks || []).slice();
+
+    if (state.currentStream && state.currentStream.playable) {
+        tracks = tracks.concat(detectVirtualAudioTracks(state.currentStream, tracks));
+    }
+
+    return tracks;
+}
+
 function getResolvedAudioTrackId() {
     var video = byId('videoPlayer');
     var audioTracks = video && video.audioTracks;
-    var matchingTrack = state.audioTracks.some(function(track) {
+    var selectableAudioTracks = getSelectableAudioTracks();
+    var matchingTrack = selectableAudioTracks.some(function(track) {
         return track.id === state.activeAudioTrack;
     });
     var index;
@@ -488,7 +746,8 @@ function getResolvedSubtitleTrackId() {
 
 function getAudioBadgeLabel() {
     var currentId = getResolvedAudioTrackId();
-    var index = state.audioTracks.findIndex(function(track) {
+    var selectableAudioTracks = getSelectableAudioTracks();
+    var index = selectableAudioTracks.findIndex(function(track) {
         return track.id === currentId;
     });
 
@@ -532,20 +791,21 @@ function applyPreferredSubtitleSelection() {
 }
 
 function cycleAudioTrack() {
+    var selectableAudioTracks = getSelectableAudioTracks();
     var currentId;
     var nextIndex;
 
-    if (!state.audioTracks.length) {
+    if (!selectableAudioTracks.length) {
         setPlayerStatus('No alternate audio tracks');
         return;
     }
 
     currentId = getResolvedAudioTrackId();
-    nextIndex = state.audioTracks.findIndex(function(track) {
+    nextIndex = selectableAudioTracks.findIndex(function(track) {
         return track.id === currentId;
     });
-    nextIndex = (nextIndex + 1 + state.audioTracks.length) % state.audioTracks.length;
-    selectAudioTrack(state.audioTracks[nextIndex].id);
+    nextIndex = (nextIndex + 1 + selectableAudioTracks.length) % selectableAudioTracks.length;
+    selectAudioTrack(selectableAudioTracks[nextIndex].id);
 }
 
 function cycleSubtitleTrack() {
@@ -964,6 +1224,7 @@ function hasAvplay() {
 function stopHtml5Playback() {
     var video = byId('videoPlayer');
     try {
+        state.suppressNextHtml5AbortDiagnostic = true;
         video.pause();
         video.removeAttribute('src');
         video.load();
@@ -1124,6 +1385,14 @@ function renderTrackChips(containerId, tracks, activeId, onSelect) {
         button.className = 'track-chip';
         button.type = 'button';
         button.setAttribute('tabindex', '-1');
+        button.setAttribute('data-track-id', track.id);
+        if (track.virtual) {
+            button.classList.add('is-virtual');
+            button.setAttribute('title', track.label);
+        }
+        if (track.failed || (state.audioTrackFailures && state.audioTrackFailures[track.id])) {
+            button.classList.add('is-failed');
+        }
         if (track.id === activeId) {
             button.classList.add('is-selected');
         }
@@ -1143,7 +1412,7 @@ function renderTrackSelectors() {
     var activeAudioTrack;
     var activeSubtitleTrack;
     var hasPlayableSelection = !!(state.currentStream && state.currentStream.playable);
-    var audioTracks = state.audioTracks.slice();
+    var audioTracks = getSelectableAudioTracks();
     var preferredSubtitleTracks = getPreferredSubtitleTracks();
     var subtitleTracks = hasPlayableSelection
         ? [{
@@ -1182,6 +1451,7 @@ function refreshHtml5Tracks() {
             nextAudio.push({
                 id: 'audio-' + index,
                 index: index,
+                codec: '',
                 label: normalizeTrackLabel('audio', {
                     language: audioTracks[index].language,
                     label: audioTracks[index].label
@@ -1219,6 +1489,12 @@ function refreshHtml5Tracks() {
     }
 
     if (!nextAudio.length) {
+        appendPlayerDiagnosticOnce(
+            'html5-no-audio-tracks',
+            'warn',
+            'HTML5 did not expose audio tracks',
+            'The stream may contain unsupported or unreported audio.'
+        );
         state.activeAudioTrack = null;
     } else if (!state.activeAudioTrack) {
         state.activeAudioTrack = nextAudio[0].id;
@@ -1247,6 +1523,7 @@ function refreshAvplayTracks() {
     try {
         totalTrackInfo = webapis.avplay.getTotalTrackInfo() || [];
     } catch (error) {
+        appendPlayerDiagnosticOnce('avplay-track-info-failed', 'error', 'AVPlay track info failed', error);
         return;
     }
 
@@ -1259,6 +1536,7 @@ function refreshAvplayTracks() {
             nextAudio.push({
                 id: trackId,
                 index: trackInfo.index,
+                codec: info.codec_fourcc || info.codec || '',
                 label: normalizeTrackLabel('audio', info, index)
             });
             return;
@@ -1280,6 +1558,15 @@ function refreshAvplayTracks() {
 
     state.audioTracks = nextAudio;
     state.subtitleTracks = nextSubs;
+
+    if (!nextAudio.length) {
+        appendPlayerDiagnosticOnce(
+            'avplay-no-audio-tracks',
+            'warn',
+            'AVPlay did not expose audio tracks',
+            'The stream may contain unsupported or unreported audio.'
+        );
+    }
 
     if (!state.activeAudioTrack && nextAudio.length) {
         state.activeAudioTrack = nextAudio[0].id;
@@ -1323,10 +1610,91 @@ function scheduleTrackRefresh() {
     });
 }
 
+function markAudioTrackFailure(trackId) {
+    state.audioTrackFailures = state.audioTrackFailures || {};
+    state.audioTrackFailures[trackId] = true;
+    renderTrackSelectors();
+}
+
+function getAudioTranscoderBaseUrl() {
+    return String(typeof AUDIO_TRANSCODER_BASE_URL === 'undefined' ? '' : AUDIO_TRANSCODER_BASE_URL)
+        .replace(/\/+$/, '')
+        .trim();
+}
+
+function requestDtsTranscodedStreamUrl(streamUrl, selectedTrack) {
+    var baseUrl = getAudioTranscoderBaseUrl();
+
+    if (!baseUrl) {
+        return Promise.reject(new Error('No audio transcoder is configured.'));
+    }
+
+    return requestJson(baseUrl + '/transcode', 'POST', {
+        url: streamUrl,
+        preferredCodec: 'dts',
+        avoidCommentary: true,
+        outputAudioCodec: 'ac3',
+        sourceLabel: selectedTrack ? selectedTrack.label : ''
+    });
+}
+
+function startTranscodedDtsPlayback(selectedTrack, streamUrl) {
+    appendPlayerDiagnostic('info', 'Requesting DTS to AC3 transcode', selectedTrack.label);
+
+    requestDtsTranscodedStreamUrl(streamUrl, selectedTrack).then(function(payload) {
+        var transcodedUrl = payload && payload.url ? payload.url : '';
+        var audio = payload && payload.audio ? payload.audio : null;
+
+        if (!transcodedUrl) {
+            throw new Error('The transcoder did not return a playback URL.');
+        }
+
+        state.activeAudioTrack = selectedTrack.id;
+        renderTrackSelectors();
+        appendPlayerDiagnostic(
+            'success',
+            'Playing detected DTS track as AC3',
+            audio && audio.label ? audio.label : selectedTrack.label
+        );
+        startAvplayStream(transcodedUrl);
+    }).catch(function(error) {
+        markAudioTrackFailure(selectedTrack.id);
+        appendPlayerDiagnostic('error', 'DTS to AC3 transcode failed', error);
+    });
+}
+
+function selectVirtualAudioTrack(selectedTrack) {
+    var streamUrl = state.currentStream && state.currentStream.raw && state.currentStream.raw.url;
+
+    if (!streamUrl) {
+        markAudioTrackFailure(selectedTrack.id);
+        appendPlayerDiagnostic('error', 'DTS attempt failed', 'No stream URL is available.');
+        return;
+    }
+
+    appendPlayerDiagnostic(
+        'warn',
+        'Detected DTS track is not exposed by AVPlay',
+        selectedTrack.label
+    );
+
+    if (getAudioTranscoderBaseUrl()) {
+        startTranscodedDtsPlayback(selectedTrack, streamUrl);
+        return;
+    }
+
+    appendPlayerDiagnostic(
+        'error',
+        'DTS track needs transcoding',
+        'Set AUDIO_TRANSCODER_BASE_URL to convert the non-commentary DTS track to AC3.'
+    );
+    markAudioTrackFailure(selectedTrack.id);
+}
+
 function selectAudioTrack(trackId) {
     var video = byId('videoPlayer');
     var audioTracks = video.audioTracks;
-    var selectedTrack = state.audioTracks.filter(function(track) {
+    var selectedTrack = getSelectableAudioTracks().filter(function(track) {
         return track.id === trackId;
     })[0];
     var index;
@@ -1337,15 +1705,31 @@ function selectAudioTrack(trackId) {
 
     showPlayerChrome(false);
 
+    if (selectedTrack.virtual) {
+        selectVirtualAudioTrack(selectedTrack);
+        return;
+    }
+
     if (state.playerMode === 'avplay' && hasAvplay()) {
+        appendPlayerDiagnostic('info', 'Selecting AVPlay audio track', selectedTrack.label);
         try {
             webapis.avplay.setSelectTrack('AUDIO', selectedTrack.index);
             state.activeAudioTrack = trackId;
             renderTrackSelectors();
             setPlayerStatus('Audio: ' + selectedTrack.label);
+            appendPlayerDiagnostic('success', 'AVPlay audio track selected', selectedTrack.label);
         } catch (error) {
+            markAudioTrackFailure(trackId);
+            appendPlayerDiagnostic('error', 'AVPlay audio switch failed', error);
             setPlayerStatus('Audio switch failed');
         }
+        return;
+    }
+
+    appendPlayerDiagnostic('info', 'Selecting HTML5 audio track', selectedTrack.label);
+    if (!audioTracks || typeof audioTracks.length !== 'number' || !audioTracks[selectedTrack.index]) {
+        markAudioTrackFailure(trackId);
+        appendPlayerDiagnostic('error', 'HTML5 audio switch failed', 'The selected track is not exposed by the video element.');
         return;
     }
 
@@ -1358,6 +1742,7 @@ function selectAudioTrack(trackId) {
     state.activeAudioTrack = trackId;
     renderTrackSelectors();
     setPlayerStatus('Audio: ' + selectedTrack.label);
+    appendPlayerDiagnostic('success', 'HTML5 audio track selected', selectedTrack.label);
 }
 
 function selectSubtitleTrack(trackId) {

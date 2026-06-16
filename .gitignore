@@ -2,3 +2,4 @@
 .sign/
 *.wgt
 .DS_Store
+*.txt

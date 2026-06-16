@@ -111,9 +111,9 @@ async function routeAddonMocks(page) {
     contentType: 'application/json',
     body: JSON.stringify({
       streams: [{
-        name: 'Smoke stream',
-        title: 'Smoke stream',
-        description: 'Playable smoke stream',
+        name: 'Smoke stream DTS-HD MA5.1',
+        title: 'Smoke stream DTS-HD MA5.1',
+        description: 'Playable smoke stream with DTS-HD MA5.1 audio',
         url: 'http://127.0.0.1/smoke-video.mp4'
       }]
     })
@@ -149,6 +149,9 @@ async function main() {
     await page.locator('#streamList .stream-card').first().click();
     await page.waitForFunction(() => document.body.getAttribute('data-current-view') === 'player');
     assert.ok((await page.locator('#playerTitle').textContent()).length > 0);
+    await page.waitForSelector('#audioTrackList .track-chip.is-virtual', { timeout: 5000 });
+    assert.ok((await page.locator('#audioTrackList .track-chip.is-virtual').textContent()).indexOf('DTS-HD MA 5.1') !== -1);
+    assert.ok((await page.locator('#playerDiagnosticsPanel').textContent()).indexOf('Diagnostics') !== -1);
 
     await page.locator('[data-view="search"]').click();
     await page.waitForFunction(() => document.body.getAttribute('data-current-view') === 'search');

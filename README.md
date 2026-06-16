@@ -37,7 +37,7 @@ The app includes:
 
 This repo does not use a Node build system. The runtime app is plain static web assets, and packaging is handled by Tizen Studio.
 
-## Build
+## Build and Install
 
 Syntax check:
 
@@ -57,25 +57,72 @@ Optional local browser smoke test:
 node tests/browser-smoke.js
 ```
 
-Build the web app:
+Set local Tizen CLI variables. Replace the placeholders with values from your own Tizen Studio setup:
 
 ```sh
-"/Users/user/tizen-studio/tools/ide/bin/tizen" build-web -- "$(pwd)"
+cd /path/to/StremioTest
+
+TIZEN="${TIZEN_STUDIO_HOME:-$HOME/tizen-studio}/tools/ide/bin/tizen"
+SDB="${TIZEN_STUDIO_HOME:-$HOME/tizen-studio}/tools/sdb"
+TARGET="<target-name-from-sdb-devices>"
+PROFILE="<security-profile-name>"
+APP_ID="VtffsKLoty.NuvioTizen"
 ```
 
-Package the widget:
-
-replace cert in the following command with your certificate
+Find connected targets and available signing profiles:
 
 ```sh
-"/Users/user/tizen-studio/tools/ide/bin/tizen" package -t wgt -s cert -- ./.buildResult
+"$SDB" devices
+"$TIZEN" security-profiles list
 ```
 
-Copy the packaged widget to the repo root:
+Build, package, install, and launch the app:
 
 ```sh
-cp ./.buildResult/*.wgt ./
+"$TIZEN" build-web -- "$(pwd)"
+"$TIZEN" package -t wgt -s "$PROFILE" -- ./.buildResult
+
+WGT="$(ls -t .buildResult/*.wgt | head -1)"
+"$TIZEN" install -n "$(basename "$WGT")" -t "$TARGET" -- "$(dirname "$WGT")"
+"$TIZEN" run -p "$APP_ID" -t "$TARGET"
 ```
+
+If the target is not listed, reconnect it with the TV IP/port shown by Tizen Studio or Device Manager:
+
+```sh
+"$SDB" connect <tv-ip>:26101
+```
+
+If installation fails because the device is not permitted for the certificate, run:
+
+```sh
+"$TIZEN" install-permit -t "$TARGET"
+```
+
+The `run` command must use the full application ID from [`config.xml`](config.xml), not only the package ID.
+
+## DTS Audio Transcode Helper
+
+Samsung TV playback may hide DTS/DTS-HD audio tracks from AVPlay. To play a non-commentary DTS track on those TVs, run the optional helper on a machine that the TV can reach. The helper probes the original stream, chooses a DTS audio stream while avoiding commentary-labeled tracks, copies the video, and transcodes that audio to AC3.
+
+Requirements:
+
+- `ffmpeg` and `ffprobe` available in `PATH`
+- The TV can reach the helper machine over the local network
+
+Start the helper:
+
+```sh
+node scripts/audio-transcoder.js
+```
+
+Point the TV app at the helper by setting [`AUDIO_TRANSCODER_BASE_URL`](js/config-state.js) before packaging:
+
+```js
+var AUDIO_TRANSCODER_BASE_URL = 'http://<helper-host-ip>:8787';
+```
+
+Then rebuild, install, and launch the app. When a detected DTS/DTS-HD audio chip is selected, the app asks the helper for a stream where that DTS track is converted to AC3 and opens that returned stream in AVPlay.
 
 ## Runtime Notes
 
