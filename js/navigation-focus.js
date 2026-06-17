@@ -894,8 +894,9 @@ function goBackOnce() {
 function formatMetaLine(item, kind) {
     return [
         kind,
-        item.releaseInfo || item.year || '',
-        item.imdbRating ? 'IMDb ' + item.imdbRating : ''
+        item && (item.releaseInfo || item.year) || '',
+        item && item.imdbRating ? 'IMDb ' + item.imdbRating : '',
+        getItemGenreLabel(item)
     ].filter(Boolean).join(' • ');
 }
 
@@ -946,7 +947,9 @@ function getItemGenreLabel(item, fallbackGenre) {
     var genres;
 
     if (Array.isArray(value)) {
-        genres = value.filter(Boolean);
+        genres = value.map(function(genre) {
+            return String(genre || '').trim();
+        }).filter(Boolean);
         if (genres.length) {
             return genres.slice(0, 2).join(' / ');
         }
@@ -974,8 +977,8 @@ function getHomeGenreFallback(key) {
 function formatHomeActiveMetaLine(item, kind, key) {
     return [
         item && item.imdbRating ? 'IMDb ' + item.imdbRating : '',
-        formatItemRuntime(item),
         getItemGenreLabel(item, getHomeGenreFallback(key)),
+        formatItemRuntime(item),
         item && (item.releaseInfo || item.year) || ''
     ].filter(Boolean).join(' • ') || formatMetaLine(item, kind === 'movie' ? 'Movie' : 'Series');
 }

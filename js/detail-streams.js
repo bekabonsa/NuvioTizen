@@ -756,6 +756,52 @@ function renderEpisodeBrowserForMode() {
     markFocusRegistryDirty();
 }
 
+function getSelectedKindLabel() {
+    return state.selectedType === 'series' ? 'Series' : 'Movie';
+}
+
+function getSelectedBrowseKey() {
+    return state.selectedType === 'series' ? 'series' : 'movies';
+}
+
+function getSelectedVideoSummary() {
+    if (state.selectedType === 'series') {
+        return state.selectedVideo
+            ? (formatSeasonLabel(getVideoSeason(state.selectedVideo)) + ' • Episode ' + (getVideoEpisode(state.selectedVideo) || '?'))
+            : 'Choose an episode';
+    }
+
+    return 'Movie';
+}
+
+function getSelectedItemMetaLine() {
+    var item = state.selectedItem;
+    var fallback = formatMetaLine(item, getSelectedKindLabel());
+
+    return formatHomeActiveMetaLine(item, state.selectedType, getSelectedBrowseKey()) || fallback;
+}
+
+function applySelectedItemFallbacks(fallbackItem) {
+    if (!state.selectedItem || !fallbackItem) {
+        return;
+    }
+
+    state.selectedItem.id = state.selectedItem.id || fallbackItem.id;
+    state.selectedItem.name = state.selectedItem.name || fallbackItem.name;
+    state.selectedItem.poster = state.selectedItem.poster || fallbackItem.poster;
+    state.selectedItem.background = state.selectedItem.background || fallbackItem.background || fallbackItem.poster;
+    state.selectedItem.description = state.selectedItem.description || fallbackItem.description;
+    state.selectedItem.releaseInfo = state.selectedItem.releaseInfo || fallbackItem.releaseInfo;
+    state.selectedItem.year = state.selectedItem.year || fallbackItem.year;
+    state.selectedItem.imdbRating = state.selectedItem.imdbRating || fallbackItem.imdbRating;
+    if (!getItemGenreLabel(state.selectedItem) && fallbackItem.genres) {
+        state.selectedItem.genres = fallbackItem.genres.slice();
+    }
+    if (!getItemGenreLabel(state.selectedItem) && fallbackItem.genre) {
+        state.selectedItem.genre = fallbackItem.genre;
+    }
+}
+
 function renderAddons() {
     var detailArtwork = byId('detailArtwork');
     var selectedTypeSummary = byId('selectedTypeSummary');
@@ -778,19 +824,13 @@ function renderAddons() {
         detailArtwork.style.backgroundImage = 'linear-gradient(180deg, rgba(9, 11, 17, 0.18), rgba(9, 11, 17, 0.42)), #0b0d14';
     } else {
         byId('selectedTitle').textContent = state.selectedItem.name || 'Untitled';
-        byId('selectedTypeLabel').textContent = state.selectedType === 'series' ? 'Series' : 'Movie';
+        byId('selectedTypeLabel').textContent = getSelectedKindLabel();
         byId('selectedDescription').textContent =
             state.selectedItem.description ||
             state.selectedItem.releaseInfo ||
             'Installed addons and streams for the current selection appear below.';
-        byId('selectedVideoLabel').textContent = state.selectedVideo
-            ? (state.selectedType === 'series'
-                ? (formatSeasonLabel(getVideoSeason(state.selectedVideo)) + ' • Episode ' + (getVideoEpisode(state.selectedVideo) || '?'))
-                : (state.selectedVideo.title || state.selectedVideo.name || state.selectedVideo.id))
-            : (state.selectedType === 'series' ? 'Choose an episode' : 'Movie stream target');
-        selectedTypeSummary.textContent = state.selectedType === 'series'
-            ? (state.selectedItem.releaseInfo || 'Series')
-            : (state.selectedItem.releaseInfo || 'Movie');
+        byId('selectedVideoLabel').textContent = getSelectedItemMetaLine();
+        selectedTypeSummary.textContent = getSelectedVideoSummary();
         detailPlayButton.textContent = state.selectedType === 'series' ? 'Play Episode' : 'Play Movie';
         detailEpisodesButton.textContent = 'More Episodes';
         detailEpisodesButton.style.display = state.selectedType === 'series' ? '' : 'none';
@@ -1136,6 +1176,7 @@ function prepareSelection(item, type, options) {
                 var meta = payload && payload.meta ? payload.meta : payload;
                 var seasons;
                 state.selectedItem = meta || item;
+                applySelectedItemFallbacks(item);
                 state.allSeriesVideos = meta && Array.isArray(meta.videos) ? meta.videos.slice() : [];
                 seasons = uniqueList(state.allSeriesVideos.map(getVideoSeason)).sort(function(left, right) {
                     return left - right;
@@ -1166,7 +1207,23 @@ function prepareSelection(item, type, options) {
     };
     state.detailMode = 'details';
     renderAddons();
-    loadStreamsForSelection();
+    fetchMetaFromAddons('movie', item.id)
+        .then(function(payload) {
+            var meta = payload && payload.meta ? payload.meta : payload;
+
+            state.selectedItem = meta || item;
+            applySelectedItemFallbacks(item);
+            state.selectedVideo = {
+                id: state.selectedItem.id || item.id,
+                title: state.selectedItem.name || item.name
+            };
+            renderAddons();
+            loadStreamsForSelection();
+        }).catch(function(error) {
+            renderAddons();
+            setAddonsMessage('Movie metadata failed: ' + error.message, 'error');
+            loadStreamsForSelection();
+        });
 }
 
 function loadStreamsForSelection(options) {

@@ -127,6 +127,9 @@ var VIEW_META = {
  * @property {string=} description
  * @property {string=} releaseInfo
  * @property {string|number=} imdbRating
+ * @property {(string|string[])=} genre
+ * @property {string[]=} genres
+ * @property {string|number=} runtime
  */
 
 /**

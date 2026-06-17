@@ -449,11 +449,13 @@ function updateUserPanel() {
 }
 
 function cloneContinueItem(item) {
+    var clone;
+
     if (!item) {
         return null;
     }
 
-    return {
+    clone = {
         id: item.id,
         name: item.name,
         poster: item.poster,
@@ -461,8 +463,23 @@ function cloneContinueItem(item) {
         description: item.description,
         releaseInfo: item.releaseInfo,
         year: item.year,
-        imdbRating: item.imdbRating
+        imdbRating: item.imdbRating,
+        runtime: item.runtime,
+        runtimeMins: item.runtimeMins,
+        runtimeMinutes: item.runtimeMinutes,
+        duration: item.duration,
+        length: item.length
     };
+
+    if (Array.isArray(item.genres)) {
+        clone.genres = item.genres.slice();
+    } else if (typeof item.genres === 'string') {
+        clone.genres = item.genres;
+    } else if (item.genre) {
+        clone.genre = item.genre;
+    }
+
+    return clone;
 }
 
 function normalizeContinueEntry(entry) {
@@ -492,9 +509,16 @@ function normalizeContinueEntry(entry) {
 
 function normalizeLibraryEntry(entry) {
     var item = entry && entry.item ? cloneContinueItem(entry.item) : null;
+    var genres = Array.isArray(entry && entry.genres)
+        ? entry.genres.slice()
+        : (typeof (entry && entry.genres) === 'string' ? entry.genres : []);
 
     if (!entry || !item || !entry.kind || !item.id) {
         return null;
+    }
+
+    if (genres.length && !item.genres) {
+        item.genres = Array.isArray(genres) ? genres.slice() : genres;
     }
 
     return {
@@ -505,7 +529,7 @@ function normalizeLibraryEntry(entry) {
         backendId: entry.backendId || entry.id || null,
         userId: entry.userId || entry.user_id || null,
         posterShape: entry.posterShape || entry.poster_shape || 'POSTER',
-        genres: Array.isArray(entry.genres) ? entry.genres.slice() : [],
+        genres: genres,
         addonBaseUrl: entry.addonBaseUrl || entry.addon_base_url || null,
         createdAt: entry.createdAt || entry.created_at || null
     };

@@ -154,6 +154,73 @@ function testBrowsePaging() {
   assert.deepStrictEqual(sandbox.trimToFullBrowseRows([1, 2, 3, 4, 5, 6, 7]), [1, 2, 3, 4, 5]);
 }
 
+function testBrowseGenreFiltering() {
+  const actionOption = {
+    label: 'Action',
+    filterGroup: 'genre',
+    extraArgs: { genre: 'Action' }
+  };
+  const items = [
+    { id: 'tt-action', name: 'Action Match', genres: ['Action', 'Drama'] },
+    { id: 'tt-drama', name: 'Drama Only', genres: ['Drama'] },
+    { id: 'tt-string', name: 'String Genres', genre: 'Action, Thriller' }
+  ];
+
+  assert.deepStrictEqual(
+    Array.from(sandbox.filterItemsForBrowseOption(items, actionOption).map((item) => item.id)),
+    ['tt-action', 'tt-string']
+  );
+}
+
+function testYearFilterDefaultAll() {
+  const yearOption = {
+    key: 'year-2026',
+    label: '2026',
+    filterGroup: 'year'
+  };
+  const yearOptions = sandbox.getYearFilterOptionsForRender('movie', [yearOption]);
+
+  sandbox.state.selectedMovieYear = '';
+  assert.deepStrictEqual(Array.from(yearOptions.map((option) => option.label)), ['All', '2026']);
+  assert.strictEqual(sandbox.getSelectedYearBrowseOption('movie'), null);
+  assert.strictEqual(sandbox.getCollapsedYearIndex('movie', yearOptions, sandbox.getSelectedYearBrowseKey('movie')), 0);
+
+  sandbox.state.selectedMovieYear = yearOption.key;
+  assert.strictEqual(sandbox.getCollapsedYearIndex('movie', yearOptions, sandbox.getSelectedYearBrowseKey('movie')), 1);
+  sandbox.state.selectedMovieYear = '';
+}
+
+function testMetadataFormatting() {
+  const item = {
+    id: 'tt-meta',
+    name: 'Metadata Film',
+    releaseInfo: '2026',
+    imdbRating: '7.8',
+    genres: ['Action', 'Adventure', 'Drama'],
+    runtime: 124
+  };
+  const cloned = sandbox.cloneContinueItem(item);
+
+  assert.strictEqual(
+    sandbox.formatMetaLine(item, 'Movie'),
+    'Movie • 2026 • IMDb 7.8 • Action / Adventure'
+  );
+  assert.strictEqual(
+    sandbox.formatHomeActiveMetaLine(item, 'movie', 'movies'),
+    'IMDb 7.8 • Action / Adventure • 2h 4m • 2026'
+  );
+  sandbox.state.selectedItem = item;
+  sandbox.state.selectedType = 'movie';
+  assert.strictEqual(
+    sandbox.getSelectedItemMetaLine(),
+    'IMDb 7.8 • Action / Adventure • 2h 4m • 2026'
+  );
+  sandbox.state.selectedItem = null;
+  sandbox.state.selectedType = null;
+  assert.deepStrictEqual(cloned.genres, ['Action', 'Adventure', 'Drama']);
+  assert.strictEqual(cloned.runtime, 124);
+}
+
 function testDtsVirtualAudioDetection() {
   const cases = [
     ['Movie DTS-HD MA5.1', 'DTS-HD MA 5.1 (detected, not exposed by TV)'],
@@ -202,6 +269,9 @@ function testDtsVirtualAudioDetection() {
   testContinueDedupe,
   testCatalogSelectionAndUrls,
   testBrowsePaging,
+  testBrowseGenreFiltering,
+  testYearFilterDefaultAll,
+  testMetadataFormatting,
   testDtsVirtualAudioDetection
 ].forEach((testFn) => testFn());
 

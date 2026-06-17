@@ -213,7 +213,8 @@ function rowToContinueEntry(row, metadata) {
         description: resolved && resolved.description ? resolved.description : '',
         releaseInfo: '',
         year: '',
-        imdbRating: ''
+        imdbRating: '',
+        genres: resolved && Array.isArray(resolved.genres) ? resolved.genres.slice() : resolved && resolved.genres || []
     };
 
     if (kind === 'series') {
@@ -259,7 +260,8 @@ function rowToLibraryEntry(row) {
             description: row.description || '',
             releaseInfo: row.release_info || '',
             year: row.release_info || '',
-            imdbRating: row.imdb_rating
+            imdbRating: row.imdb_rating,
+            genres: Array.isArray(row.genres) ? row.genres.slice() : row.genres || []
         },
         addedAt: row && (row.created_at || row.added_at),
         updatedAt: row && row.updated_at,
@@ -685,7 +687,7 @@ function renderBrowseGenreRows() {
         var normalOptions = options.filter(function(option) {
             return !isYearBrowseOption(option);
         });
-        var yearOptions = options.filter(isYearBrowseOption);
+        var yearOptions = getYearFilterOptionsForRender(type, options);
         var previousGroup = '';
         container.innerHTML = '';
 
@@ -758,7 +760,7 @@ function moveFocusedYearFilter(direction) {
         currentIndex = getYearFocusIndex(type);
     }
 
-    yearOptions = getBrowseOptions(type).filter(isYearBrowseOption);
+    yearOptions = getYearFilterOptionsForRender(type, getBrowseOptions(type));
     nextIndex = currentIndex + direction;
 
     if (!yearOptions.length || currentIndex !== currentIndex) {
@@ -833,7 +835,7 @@ function exitFocusedYearFilter(direction) {
             focusCurrent();
         } else {
             renderBrowseGenreRows();
-            focusYearFilter(type, getCollapsedYearIndex(type, getBrowseOptions(type).filter(isYearBrowseOption), getSelectedBrowseKey(type)));
+            focusYearFilter(type, getCollapsedYearIndex(type, getYearFilterOptionsForRender(type, getBrowseOptions(type)), getSelectedYearBrowseKey(type)));
         }
         return true;
     }
@@ -850,7 +852,7 @@ function exitFocusedYearFilter(direction) {
         focusCurrent();
     } else {
         renderBrowseGenreRows();
-        focusYearFilter(type, getCollapsedYearIndex(type, getBrowseOptions(type).filter(isYearBrowseOption), getSelectedBrowseKey(type)));
+        focusYearFilter(type, getCollapsedYearIndex(type, getYearFilterOptionsForRender(type, getBrowseOptions(type)), getSelectedYearBrowseKey(type)));
     }
     return true;
 }
@@ -1098,9 +1100,10 @@ function fetchBrowseCatalog(type, append) {
         var normalized = useLocalPaging
             ? shuffleCatalogItems(uniqueCatalogItems(payload && Array.isArray(payload.metas) ? payload.metas : []))
             : shuffleCatalogItems(uniqueCatalogItems(normalizeCatalogPayloadWithLimit(payload, requestLimit)));
-        var items = useLocalPaging ? normalized.slice(skip, skip + requestLimit) : normalized.slice(0, requestLimit);
+        var filtered = filterItemsForBrowseOption(normalized, option);
+        var items = useLocalPaging ? filtered.slice(skip, skip + requestLimit) : filtered.slice(0, requestLimit);
         var nextItems = trimToFullBrowseRows(append ? uniqueCatalogItems(currentItems.concat(items)) : items);
-        var remainingLocalItems = normalized.length - nextItems.length;
+        var remainingLocalItems = filtered.length - nextItems.length;
         var canLoadMore = useLocalPaging
             ? remainingLocalItems >= BROWSE_ROW_SIZE || isCinemetaSeriesTopCatalog(option)
             : supportsRemoteBrowsePaging(option) && (!append || nextItems.length > currentItems.length);
@@ -1143,10 +1146,13 @@ function fetchCatalogs() {
             : Promise.resolve({ metas: [] });
 
         return Promise.all([movieRequest, seriesRequest]).then(function(results) {
+            var movieItems = shuffleCatalogItems(uniqueCatalogItems(normalizeCatalogPayloadWithLimit(results[0], CINEMETA_CATALOG_PAGE_SIZE)));
+            var seriesItems = shuffleCatalogItems(uniqueCatalogItems(normalizeCatalogPayloadWithLimit(results[1], CINEMETA_CATALOG_PAGE_SIZE)));
+
             state.movies = uniqueCatalogItems(normalizeCatalogPayload(results[0]), HOME_CATALOG_LIMIT);
             state.series = uniqueCatalogItems(normalizeCatalogPayload(results[1]), HOME_CATALOG_LIMIT);
-            state.movieBrowseItems = trimToFullBrowseRows(shuffleCatalogItems(uniqueCatalogItems(normalizeCatalogPayloadWithLimit(results[0], CINEMETA_CATALOG_PAGE_SIZE))).slice(0, BROWSE_PAGE_SIZE));
-            state.seriesBrowseItems = trimToFullBrowseRows(shuffleCatalogItems(uniqueCatalogItems(normalizeCatalogPayloadWithLimit(results[1], CINEMETA_CATALOG_PAGE_SIZE))).slice(0, BROWSE_PAGE_SIZE));
+            state.movieBrowseItems = trimToFullBrowseRows(filterItemsForBrowseOption(movieItems, movieOption).slice(0, BROWSE_PAGE_SIZE));
+            state.seriesBrowseItems = trimToFullBrowseRows(filterItemsForBrowseOption(seriesItems, seriesOption).slice(0, BROWSE_PAGE_SIZE));
             renderCatalogViews();
             renderBrowseViews();
             scheduleBrowsePrefetch('movie');

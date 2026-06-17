@@ -582,6 +582,25 @@ function isYearBrowseOption(option) {
     return option && option.filterGroup === 'year';
 }
 
+function getAllYearBrowseOption(type) {
+    return {
+        key: '',
+        label: 'All',
+        type: type,
+        catalogId: '',
+        extraArgs: null,
+        filterGroup: 'year',
+        supportsSearch: false,
+        supportsSkip: false
+    };
+}
+
+function getYearFilterOptionsForRender(type, options) {
+    var yearOptions = (options || []).filter(isYearBrowseOption);
+
+    return yearOptions.length ? [getAllYearBrowseOption(type)].concat(yearOptions) : [];
+}
+
 function getYearOptionIndex(yearOptions, key) {
     var index = -1;
 
@@ -732,6 +751,28 @@ function itemMatchesGenreLabel(item, genre) {
     });
 }
 
+function getBrowseGenreFilterLabel(option) {
+    if (!option || option.filterGroup !== 'genre') {
+        return '';
+    }
+
+    return option.extraArgs && option.extraArgs.genre
+        ? String(option.extraArgs.genre)
+        : String(option.label || '').split(' • ')[0];
+}
+
+function filterItemsForBrowseOption(items, option) {
+    var genre = getBrowseGenreFilterLabel(option);
+
+    if (!genre) {
+        return (items || []).slice();
+    }
+
+    return (items || []).filter(function(item) {
+        return itemMatchesGenreLabel(item, genre);
+    });
+}
+
 function getItemImdbRatingNumber(item) {
     var value = item && item.imdbRating;
     var parsed;
@@ -777,6 +818,7 @@ function getSelectedYearCombinedOptions(type) {
 function fetchYearCombinedBrowse(type, baseOption, yearOption, currentItems, append) {
     var targetLength = (append ? currentItems.length : 0) + (append ? BROWSE_LOAD_MORE_SIZE : BROWSE_PAGE_SIZE);
     var baseIsGenre = baseOption && baseOption.filterGroup === 'genre';
+    var baseGenreLabel = getBrowseGenreFilterLabel(baseOption);
     var baseRequest = baseIsGenre && baseOption
         ? requestBrowseCatalogPayload(baseOption, 0).catch(function() {
             return { metas: [] };
@@ -805,7 +847,8 @@ function fetchYearCombinedBrowse(type, baseOption, yearOption, currentItems, app
                 return true;
             }
 
-            return itemMatchesGenreLabel(item, baseOption.label) || !!baseIds[item.id];
+            return itemMatchesGenreLabel(item, baseGenreLabel)
+                || (!getItemGenres(item).length && !!baseIds[item.id]);
         });
         filtered = sortItemsForBrowseBase(filtered, baseOption);
         combined = append ? uniqueCatalogItems((currentItems || []).concat(filtered)) : filtered;
@@ -1007,8 +1050,9 @@ function fetchCinemetaBrowseAppend(type, option, currentItems) {
 
     function appendPageItems(items) {
         var beforeLength = nextItems.length;
+        var filteredItems = filterItemsForBrowseOption(items, option);
 
-        nextItems = appendCatalogItems(nextItems, items, targetLength);
+        nextItems = appendCatalogItems(nextItems, filteredItems, targetLength);
         return nextItems.length > beforeLength;
     }
 
