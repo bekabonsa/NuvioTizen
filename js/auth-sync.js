@@ -290,6 +290,7 @@ function fetchContinueWatchingFromNuvio() {
         }
 
         return resolveWatchProgressMetadata(progressRows).then(function(metadata) {
+            var localByKey = {};
             var entries = progressRows.map(function(row) {
                 return rowToContinueEntry(row, metadata);
             }).filter(Boolean);
@@ -297,6 +298,18 @@ function fetchContinueWatchingFromNuvio() {
             if (!entries.length) {
                 return false;
             }
+            state.continueWatching.forEach(function(entry) {
+                var key = continueEntryKey(entry);
+                if (key && entry.stream) {
+                    localByKey[key] = entry.stream;
+                }
+            });
+            entries.forEach(function(entry) {
+                var key = continueEntryKey(entry);
+                if (key && !entry.stream && localByKey[key]) {
+                    entry.stream = localByKey[key];
+                }
+            });
             state.continueWatching = dedupeEntries(entries, normalizeContinueEntry, CONTINUE_WATCHING_LIMIT);
             saveContinueWatching();
             renderContinueWatching();
@@ -659,6 +672,7 @@ function renderBrowseGenreRows() {
             }
             button.addEventListener('click', function() {
                 if (!isYearFilterOpen(type)) {
+                    setRatingFilterOpen(type, false);
                     setYearFocusIndex(type, optionIndex);
                     setYearWindowStart(type, clampYearWindowStart(optionIndex - 1, yearOptions.length));
                     setYearFilterOpen(type, true);
@@ -668,10 +682,93 @@ function renderBrowseGenreRows() {
                 }
 
                 setYearFilterOpen(type, false);
+                setRatingFilterOpen(type, false);
                 setYearFocusIndex(type, optionIndex);
                 onSelect(option);
                 renderBrowseGenreRows();
                 focusYearFilter(type, optionIndex);
+            });
+            stack.appendChild(button);
+        });
+
+        container.appendChild(stack);
+    }
+
+    function renderRatingFilters(container, type, ratingOptions, activeKey, onSelect) {
+        var label;
+        var stack;
+        var start;
+        var visibleOptions;
+        var open;
+        var collapsedIndex;
+
+        if (!ratingOptions.length) {
+            return;
+        }
+
+        open = isRatingFilterOpen(type);
+        if (open) {
+            start = getOpenRatingWindowStartForRender(type, ratingOptions);
+            visibleOptions = ratingOptions.slice(start, start + YEAR_FILTER_WINDOW_SIZE);
+        } else {
+            collapsedIndex = getCollapsedRatingIndex(type, ratingOptions, activeKey);
+            start = collapsedIndex;
+            visibleOptions = [ratingOptions[collapsedIndex]];
+        }
+
+        label = document.createElement('span');
+        label.className = 'year-filter-label rating-filter-label';
+        label.textContent = 'IMDb';
+        container.appendChild(label);
+
+        stack = document.createElement('div');
+        stack.className = 'year-filter-stack rating-filter-stack';
+        if (!open) {
+            stack.classList.add('is-year-filter-collapsed', 'is-rating-filter-collapsed');
+        }
+        stack.setAttribute('data-rating-filter-type', type);
+
+        visibleOptions.forEach(function(option, index) {
+            var button = document.createElement('button');
+            var optionIndex = start + index;
+
+            button.className = 'genre-chip is-rating-filter';
+            button.type = 'button';
+            button.setAttribute('tabindex', '-1');
+            button.setAttribute('data-rating-filter-type', type);
+            button.setAttribute('data-rating-index', String(optionIndex));
+            button.setAttribute('data-rating-total', String(ratingOptions.length));
+            button.setAttribute('aria-expanded', open ? 'true' : 'false');
+            button.textContent = option.label;
+            button.setAttribute('aria-label', open ? 'IMDb rating ' + option.label : 'Choose IMDb rating. Current ' + option.label);
+            if (option.key === activeKey) {
+                button.classList.add('is-selected');
+            }
+            if (!open) {
+                button.classList.add('is-rating-collapsed');
+            }
+            if (open && optionIndex === start && start > 0) {
+                button.classList.add('is-rating-window-edge');
+            }
+            if (open && optionIndex === start + visibleOptions.length - 1 && optionIndex < ratingOptions.length - 1) {
+                button.classList.add('is-rating-window-edge');
+            }
+            button.addEventListener('click', function() {
+                if (!isRatingFilterOpen(type)) {
+                    setYearFilterOpen(type, false);
+                    setRatingFocusIndex(type, optionIndex);
+                    setRatingWindowStart(type, clampRatingWindowStart(optionIndex - 1, ratingOptions.length));
+                    setRatingFilterOpen(type, true);
+                    renderBrowseGenreRows();
+                    focusRatingFilter(type, optionIndex);
+                    return;
+                }
+
+                setRatingFilterOpen(type, false);
+                setRatingFocusIndex(type, optionIndex);
+                onSelect(option);
+                renderBrowseGenreRows();
+                focusRatingFilter(type, optionIndex);
             });
             stack.appendChild(button);
         });
@@ -684,10 +781,12 @@ function renderBrowseGenreRows() {
         var fragment = document.createDocumentFragment();
         var type = getBrowseTypeFromContainer(containerId);
         var activeYearKey = getSelectedYearBrowseKey(type);
+        var activeRatingKey = getSelectedRatingBrowseKey(type);
         var normalOptions = options.filter(function(option) {
-            return !isYearBrowseOption(option);
+            return !isYearBrowseOption(option) && !isRatingBrowseOption(option);
         });
         var yearOptions = getYearFilterOptionsForRender(type, options);
+        var ratingOptions = getRatingFilterOptionsForRender(type);
         var previousGroup = '';
         container.innerHTML = '';
 
@@ -707,13 +806,21 @@ function renderBrowseGenreRows() {
             button.textContent = option.label;
             button.addEventListener('click', function() {
                 setYearFilterOpen(type, false);
+                setRatingFilterOpen(type, false);
                 onSelect(option);
             });
             fragment.appendChild(button);
         });
 
         renderYearFilters(fragment, type, yearOptions, activeYearKey, function(option) {
+            setRatingFilterOpen(type, false);
             setSelectedYearBrowseKey(type, option.key);
+            resetBrowsePaging(type);
+            fetchBrowseCatalog(type, false);
+        });
+        renderRatingFilters(fragment, type, ratingOptions, activeRatingKey, function(option) {
+            setYearFilterOpen(type, false);
+            setSelectedRatingBrowseKey(type, option.key);
             resetBrowsePaging(type);
             fetchBrowseCatalog(type, false);
         });
@@ -857,6 +964,129 @@ function exitFocusedYearFilter(direction) {
     return true;
 }
 
+function moveFocusedRatingFilter(direction) {
+    var active = document.activeElement;
+    var type = active && active.getAttribute ? active.getAttribute('data-rating-filter-type') : '';
+    var currentIndex;
+    var nextIndex;
+    var ratingOptions;
+    var start;
+    var nextStart;
+    var nextButton;
+    var row;
+    var nextCol;
+
+    if (!type) {
+        type = getCurrentBrowseType();
+    }
+    if (!type || !isRatingFilterOpen(type)) {
+        return false;
+    }
+
+    currentIndex = active && active.classList && active.classList.contains('is-rating-filter')
+        ? Number(active.getAttribute('data-rating-index'))
+        : getRatingFocusIndex(type);
+    if (currentIndex !== currentIndex) {
+        currentIndex = getRatingFocusIndex(type);
+    }
+
+    ratingOptions = getRatingFilterOptionsForRender(type);
+    nextIndex = currentIndex + direction;
+
+    if (!ratingOptions.length || currentIndex !== currentIndex) {
+        return false;
+    }
+    if (nextIndex < 0 || nextIndex >= ratingOptions.length) {
+        return true;
+    }
+    setRatingFocusIndex(type, nextIndex);
+
+    start = clampRatingWindowStart(getRatingWindowStart(type), ratingOptions.length);
+    nextStart = clampRatingWindowStart(nextIndex - Math.floor(YEAR_FILTER_WINDOW_SIZE / 2), ratingOptions.length);
+    nextStart = clampRatingWindowStart(nextStart, ratingOptions.length);
+
+    if (nextStart !== start) {
+        setRatingWindowStart(type, nextStart);
+        renderBrowseGenreRows();
+    }
+
+    row = getMainRows()[0] || [];
+    nextButton = null;
+    row.some(function(button) {
+        if (button && button.classList && button.classList.contains('is-rating-filter') && button.getAttribute('data-rating-index') === String(nextIndex)) {
+            nextButton = button;
+            return true;
+        }
+
+        return false;
+    });
+    if (!nextButton) {
+        renderBrowseGenreRows();
+        focusRatingFilter(type, nextIndex);
+        return true;
+    }
+
+    nextCol = row.indexOf(nextButton);
+    if (nextCol >= 0) {
+        state.mainRow = 0;
+        state.mainCol = nextCol;
+    }
+    focusCurrent();
+    return true;
+}
+
+function exitFocusedRatingFilter(direction) {
+    var active = document.activeElement;
+    var type = active && active.getAttribute ? active.getAttribute('data-rating-filter-type') : '';
+    var row;
+    var currentCol;
+    var nextCol;
+
+    if (!type || !active.classList || !active.classList.contains('is-rating-filter')) {
+        return false;
+    }
+
+    row = getMainRows()[0] || [];
+    currentCol = row.indexOf(active);
+    if (currentCol < 0) {
+        return false;
+    }
+
+    if (direction < 0) {
+        setRatingFilterOpen(type, false);
+        nextCol = currentCol - 1;
+        while (nextCol >= 0 && row[nextCol].classList.contains('is-rating-filter')) {
+            nextCol -= 1;
+        }
+        if (nextCol >= 0) {
+            state.mainRow = 0;
+            state.mainCol = nextCol;
+            renderBrowseGenreRows();
+            focusCurrent();
+        } else {
+            renderBrowseGenreRows();
+            focusRatingFilter(type, getCollapsedRatingIndex(type, getRatingFilterOptionsForRender(type), getSelectedRatingBrowseKey(type)));
+        }
+        return true;
+    }
+
+    setRatingFilterOpen(type, false);
+    nextCol = currentCol + 1;
+    while (nextCol < row.length && row[nextCol].classList.contains('is-rating-filter')) {
+        nextCol += 1;
+    }
+    if (nextCol < row.length) {
+        state.mainRow = 0;
+        state.mainCol = nextCol;
+        renderBrowseGenreRows();
+        focusCurrent();
+    } else {
+        renderBrowseGenreRows();
+        focusRatingFilter(type, getCollapsedRatingIndex(type, getRatingFilterOptionsForRender(type), getSelectedRatingBrowseKey(type)));
+    }
+    return true;
+}
+
 function updateBrowseLoadMoreButton(type) {
     var button = byId(type === 'movie' ? 'movieLoadMoreButton' : 'seriesLoadMoreButton');
     var option = getSelectedBrowseOption(type);
@@ -880,12 +1110,24 @@ function updateBrowseLoadMoreButton(type) {
 }
 
 function renderBrowseViews() {
-    renderCardRows('movieGrid', state.movieBrowseItems, 'movie', BROWSE_ROW_SIZE);
-    renderCardRows('seriesGrid', state.seriesBrowseItems, 'series', BROWSE_ROW_SIZE);
+    var movieOption = getSelectedBrowseOption('movie');
+    var seriesOption = getSelectedBrowseOption('series');
+    var movieItems = filterItemsForBrowseOption(state.movieBrowseItems, movieOption);
+    var seriesItems = filterItemsForBrowseOption(state.seriesBrowseItems, seriesOption);
 
-    byId('movieCount').textContent = state.movieBrowseItems.length + ' loaded • ' + getSelectedBrowseLabel('movie')
+    if (movieItems.length !== state.movieBrowseItems.length) {
+        state.movieBrowseItems = movieItems;
+    }
+    if (seriesItems.length !== state.seriesBrowseItems.length) {
+        state.seriesBrowseItems = seriesItems;
+    }
+
+    renderCardRows('movieGrid', movieItems, 'movie', BROWSE_ROW_SIZE);
+    renderCardRows('seriesGrid', seriesItems, 'series', BROWSE_ROW_SIZE);
+
+    byId('movieCount').textContent = movieItems.length + ' loaded • ' + getSelectedBrowseLabel('movie')
         + (getBrowseCanLoadMore('movie') ? '' : ' • end');
-    byId('seriesCount').textContent = state.seriesBrowseItems.length + ' loaded • ' + getSelectedBrowseLabel('series')
+    byId('seriesCount').textContent = seriesItems.length + ' loaded • ' + getSelectedBrowseLabel('series')
         + (getBrowseCanLoadMore('series') ? '' : ' • end');
     updateBrowseLoadMoreButton('movie');
     updateBrowseLoadMoreButton('series');
@@ -1004,12 +1246,20 @@ function removeSelectedFromLibrary() {
 
 function fetchBrowseCatalog(type, append) {
     var option = getSelectedBrowseOption(type);
+    var ratingCombined = getSelectedRatingCombinedOptions(type);
     var yearCombined = getSelectedYearCombinedOptions(type);
     var currentItems = getBrowseItems(type);
-    var skip = append ? currentItems.length : 0;
-    var useLocalPaging = usesLocalBrowsePaging(option, skip);
-    var requestSkip = useLocalPaging ? 0 : getBrowseRequestSkip(option, skip);
-    var requestLimit = append && isCinemetaSeriesTopCatalog(option) && !useLocalPaging
+    var visibleSkip = append ? currentItems.length : 0;
+    var storedSkip = append ? getBrowseSkip(type) : 0;
+    var useLocalPaging = usesLocalBrowsePaging(option, visibleSkip);
+    var requestSkip = useLocalPaging ? 0 : getBrowseRequestSkip(option, storedSkip || visibleSkip);
+    var genreFilter = getBrowseGenreFilterLabel(option);
+    var ratingFilter = getSelectedRatingBrowseOption(type);
+    var requestLimit = genreFilter && isCinemetaTopCatalog(option)
+        ? CINEMETA_CATALOG_PAGE_SIZE
+        : ratingFilter
+        ? CINEMETA_CATALOG_PAGE_SIZE
+        : append && isCinemetaSeriesTopCatalog(option) && !useLocalPaging
         ? CINEMETA_CATALOG_PAGE_SIZE
         : (append ? BROWSE_LOAD_MORE_SIZE : BROWSE_PAGE_SIZE);
 
@@ -1037,6 +1287,29 @@ function fetchBrowseCatalog(type, append) {
         return Promise.resolve();
     }
 
+    if (ratingCombined) {
+        updateConnectionStatus('Loading ' + type + ' browse...', false, false);
+        return fetchRatingCombinedBrowse(type, ratingCombined, currentItems, append).then(function(result) {
+            setBrowseItems(type, result.items);
+            setBrowseSkip(type, result.nextSkip);
+            setBrowseCanLoadMore(type, result.canLoadMore);
+            if (append && result.items.length === currentItems.length) {
+                updateConnectionStatus('No more full rows are available in this catalog.', false, true);
+            } else {
+                updateConnectionStatus('Addon catalogs ready', true, false);
+            }
+            renderBrowseViews();
+            if ((type === 'movie' && state.currentView === 'movies') || (type === 'series' && state.currentView === 'series')) {
+                setTimeout(focusCurrent, 0);
+            }
+            finishAppendLoading();
+            scheduleBrowsePrefetch(type);
+        }).catch(function(error) {
+            finishAppendLoading();
+            updateConnectionStatus('Catalog error: ' + error.message, false, true);
+        });
+    }
+
     if (yearCombined) {
         updateConnectionStatus('Loading ' + type + ' browse...', false, false);
         return fetchYearCombinedBrowse(type, yearCombined.baseOption, yearCombined.yearOption, currentItems, append).then(function(result) {
@@ -1060,7 +1333,7 @@ function fetchBrowseCatalog(type, append) {
         });
     }
 
-    if (append && isCinemetaBrowseExpansionOption(option)) {
+    if (append && usesCinemetaBrowseExpansion(option)) {
         updateConnectionStatus('Loading ' + type + ' browse...', false, false);
         return fetchCinemetaBrowseAppend(type, option, currentItems).then(function(result) {
             setBrowseItems(type, result.items);
@@ -1097,19 +1370,26 @@ function fetchBrowseCatalog(type, append) {
     updateConnectionStatus('Loading ' + type + ' browse...', false, false);
 
     return requestBrowseCatalogPayload(option, requestSkip).then(function(payload) {
-        var normalized = useLocalPaging
-            ? shuffleCatalogItems(uniqueCatalogItems(payload && Array.isArray(payload.metas) ? payload.metas : []))
-            : shuffleCatalogItems(uniqueCatalogItems(normalizeCatalogPayloadWithLimit(payload, requestLimit)));
+        var rawItems = useLocalPaging
+            ? uniqueCatalogItems(payload && Array.isArray(payload.metas) ? payload.metas : [])
+            : uniqueCatalogItems(normalizeCatalogPayloadWithLimit(payload, requestLimit));
+        var normalized = orderItemsForBrowseOption(rawItems, option);
         var filtered = filterItemsForBrowseOption(normalized, option);
-        var items = useLocalPaging ? filtered.slice(skip, skip + requestLimit) : filtered.slice(0, requestLimit);
+        var items = useLocalPaging ? filtered.slice(visibleSkip, visibleSkip + requestLimit) : filtered.slice(0, requestLimit);
         var nextItems = trimToFullBrowseRows(append ? uniqueCatalogItems(currentItems.concat(items)) : items);
         var remainingLocalItems = filtered.length - nextItems.length;
         var canLoadMore = useLocalPaging
             ? remainingLocalItems >= BROWSE_ROW_SIZE || isCinemetaSeriesTopCatalog(option)
-            : supportsRemoteBrowsePaging(option) && (!append || nextItems.length > currentItems.length);
+            : supportsRemoteBrowsePaging(option) && (
+                genreFilter
+                    ? rawItems.length > 0
+                    : ratingFilter
+                    ? rawItems.length > 0
+                    : (!append || nextItems.length > currentItems.length)
+            );
 
         setBrowseItems(type, nextItems);
-        setBrowseSkip(type, nextItems.length);
+        setBrowseSkip(type, useLocalPaging ? nextItems.length : requestSkip + rawItems.length);
         setBrowseCanLoadMore(type, canLoadMore);
         if (append && nextItems.length === currentItems.length) {
             updateConnectionStatus('No more full rows are available in this catalog.', false, true);
@@ -1146,13 +1426,17 @@ function fetchCatalogs() {
             : Promise.resolve({ metas: [] });
 
         return Promise.all([movieRequest, seriesRequest]).then(function(results) {
-            var movieItems = shuffleCatalogItems(uniqueCatalogItems(normalizeCatalogPayloadWithLimit(results[0], CINEMETA_CATALOG_PAGE_SIZE)));
-            var seriesItems = shuffleCatalogItems(uniqueCatalogItems(normalizeCatalogPayloadWithLimit(results[1], CINEMETA_CATALOG_PAGE_SIZE)));
+            var movieRawItems = uniqueCatalogItems(normalizeCatalogPayloadWithLimit(results[0], CINEMETA_CATALOG_PAGE_SIZE));
+            var seriesRawItems = uniqueCatalogItems(normalizeCatalogPayloadWithLimit(results[1], CINEMETA_CATALOG_PAGE_SIZE));
+            var movieItems = orderItemsForBrowseOption(movieRawItems, movieOption);
+            var seriesItems = orderItemsForBrowseOption(seriesRawItems, seriesOption);
 
             state.movies = uniqueCatalogItems(normalizeCatalogPayload(results[0]), HOME_CATALOG_LIMIT);
             state.series = uniqueCatalogItems(normalizeCatalogPayload(results[1]), HOME_CATALOG_LIMIT);
             state.movieBrowseItems = trimToFullBrowseRows(filterItemsForBrowseOption(movieItems, movieOption).slice(0, BROWSE_PAGE_SIZE));
             state.seriesBrowseItems = trimToFullBrowseRows(filterItemsForBrowseOption(seriesItems, seriesOption).slice(0, BROWSE_PAGE_SIZE));
+            setBrowseSkip('movie', movieRawItems.length);
+            setBrowseSkip('series', seriesRawItems.length);
             renderCatalogViews();
             renderBrowseViews();
             scheduleBrowsePrefetch('movie');

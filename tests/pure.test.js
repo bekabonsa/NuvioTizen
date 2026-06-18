@@ -146,10 +146,21 @@ function testBrowsePaging() {
     catalogId: 'top',
     supportsSkip: true
   };
+  const movieAction = {
+    addon: { transportUrl: 'https://v3-cinemeta.strem.io/manifest.json' },
+    type: 'movie',
+    catalogId: 'top',
+    filterGroup: 'genre',
+    extraArgs: { genre: 'Action' },
+    supportsSkip: true
+  };
 
   assert.strictEqual(sandbox.usesLocalBrowsePaging(movieTop, 100), true);
   assert.strictEqual(sandbox.usesLocalBrowsePaging(seriesTop, 0), true);
   assert.strictEqual(sandbox.usesLocalBrowsePaging(seriesTop, 50), false);
+  assert.strictEqual(sandbox.usesLocalBrowsePaging(movieAction, 0), false);
+  assert.strictEqual(sandbox.supportsRemoteBrowsePaging(movieAction), true);
+  assert.strictEqual(sandbox.usesCinemetaBrowseExpansion(movieAction), false);
   assert.strictEqual(sandbox.getBrowseRequestSkip(seriesTop, 51), 50);
   assert.deepStrictEqual(sandbox.trimToFullBrowseRows([1, 2, 3, 4, 5, 6, 7]), [1, 2, 3, 4, 5]);
 }
@@ -163,12 +174,17 @@ function testBrowseGenreFiltering() {
   const items = [
     { id: 'tt-action', name: 'Action Match', genres: ['Action', 'Drama'] },
     { id: 'tt-drama', name: 'Drama Only', genres: ['Drama'] },
-    { id: 'tt-string', name: 'String Genres', genre: 'Action, Thriller' }
+    { id: 'tt-string', name: 'String Genres', genre: 'Action, Thriller' },
+    { id: 'tt-compound', name: 'Compound Genres', genres: ['Sci-Fi & Fantasy', 'Action & Adventure', 'Drama'] }
   ];
 
   assert.deepStrictEqual(
     Array.from(sandbox.filterItemsForBrowseOption(items, actionOption).map((item) => item.id)),
-    ['tt-action', 'tt-string']
+    ['tt-action', 'tt-string', 'tt-compound']
+  );
+  assert.strictEqual(
+    sandbox.getItemGenreLabel(items[3], ''),
+    'Sci-Fi & Fantasy / Action & Adventure'
   );
 }
 
@@ -188,6 +204,73 @@ function testYearFilterDefaultAll() {
   sandbox.state.selectedMovieYear = yearOption.key;
   assert.strictEqual(sandbox.getCollapsedYearIndex('movie', yearOptions, sandbox.getSelectedYearBrowseKey('movie')), 1);
   sandbox.state.selectedMovieYear = '';
+}
+
+function testImdbRatingFilter() {
+  const cinemetaAddon = { transportUrl: 'https://v3-cinemeta.strem.io/manifest.json' };
+  const movieOption = {
+    key: 'popular',
+    label: 'Popular',
+    addon: cinemetaAddon,
+    type: 'movie',
+    catalogId: 'top',
+    filterGroup: 'catalog'
+  };
+  const actionOption = {
+    key: 'action',
+    label: 'Action',
+    addon: cinemetaAddon,
+    type: 'movie',
+    catalogId: 'top',
+    filterGroup: 'genre',
+    extraArgs: { genre: 'Action' }
+  };
+  const ratingSourceOption = {
+    key: 'featured',
+    label: 'Featured',
+    addon: cinemetaAddon,
+    type: 'movie',
+    catalogId: 'imdbRating',
+    filterGroup: 'catalog',
+    supportsSkip: true
+  };
+  const ratingOptions = sandbox.getRatingFilterOptionsForRender('movie');
+  const ratingSeven = ratingOptions.filter((option) => option.label === '7')[0];
+  const items = [
+    { id: 'tt-69', name: 'Below', imdbRating: '6.9' },
+    { id: 'tt-70', name: 'Match Low', imdbRating: '7.0' },
+    { id: 'tt-78', name: 'Match High', imdbRating: 7.8 },
+    { id: 'tt-80', name: 'Too High', imdbRating: '8.0' },
+    { id: 'tt-none', name: 'No Rating' }
+  ];
+
+  sandbox.state.movieGenres = [movieOption, actionOption, ratingSourceOption];
+  sandbox.state.selectedMovieGenre = movieOption.key;
+  sandbox.state.selectedMovieRating = '';
+  assert.deepStrictEqual(Array.from(ratingOptions.map((option) => option.label)), ['All', '9', '8', '7', '6', '5', '4', '3', '2', '1']);
+  assert.strictEqual(sandbox.getSelectedRatingBrowseOption('movie'), null);
+  assert.strictEqual(sandbox.getCollapsedRatingIndex('movie', ratingOptions, sandbox.getSelectedRatingBrowseKey('movie')), 0);
+
+  sandbox.state.selectedMovieRating = ratingSeven.key;
+  assert.strictEqual(sandbox.getCollapsedRatingIndex('movie', ratingOptions, sandbox.getSelectedRatingBrowseKey('movie')), 3);
+  assert.deepStrictEqual(
+    Array.from(sandbox.filterItemsForBrowseOption(items, movieOption).map((item) => item.id)),
+    ['tt-70', 'tt-78']
+  );
+  assert.strictEqual(sandbox.getSelectedBrowseLabel('movie'), 'Popular • IMDb 7');
+
+  sandbox.state.selectedMovieGenre = actionOption.key;
+  const combined = sandbox.getSelectedRatingCombinedOptions('movie');
+  assert.strictEqual(combined.sourceOption.catalogId, 'imdbRating');
+  assert.strictEqual(combined.sourceOption.extraArgs.genre, 'Action');
+  assert.strictEqual(
+    sandbox.buildCatalogRequestUrl(combined.sourceOption, 50),
+    'https://v3-cinemeta.strem.io/catalog/movie/imdbRating/genre=Action&skip=50.json'
+  );
+
+  sandbox.state.selectedMovieRating = '';
+  sandbox.state.movieGenres = [];
+  sandbox.state.selectedMovieGenre = '';
 }
 
 function testMetadataFormatting() {
@@ -264,6 +347,88 @@ function testDtsVirtualAudioDetection() {
   );
 }
 
+function testResumeAndTranscodedTimelineHelpers() {
+  const savedStream = sandbox.cloneContinueStream({
+    addonName: 'Torrentio',
+    addonBaseUrl: 'https://addon.example.test',
+    playable: true,
+    status: 'Playable',
+    title: '4K stream',
+    description: 'Saved source',
+    raw: {
+      url: 'https://cdn.example.test/movie.mkv',
+      name: '4K',
+      behaviorHints: { filename: 'movie.mkv' },
+      subtitles: [{ id: 'en', url: 'https://cdn.example.test/en.vtt' }]
+    }
+  });
+
+  assert.strictEqual(savedStream.raw.url, 'https://cdn.example.test/movie.mkv');
+  assert.strictEqual(savedStream.raw.subtitles[0].id, 'en');
+
+  const normalizedEntry = sandbox.normalizeContinueEntry({
+    kind: 'movie',
+    item: { id: 'tt123', name: 'Movie' },
+    video: { id: 'tt123', title: 'Movie' },
+    position: 20,
+    stream: savedStream
+  });
+
+  assert.strictEqual(normalizedEntry.stream.raw.url, savedStream.raw.url);
+
+  sandbox.state.allSeriesVideos = [
+    { id: 'show:1:1', season: 1, episode: 1, title: 'Pilot' },
+    { id: 'show:2:3', season: 2, episode: 3, title: 'Third' }
+  ];
+  sandbox.state.pendingResumeStream = savedStream;
+  sandbox.state.streams = [
+    {
+      addonName: 'Different',
+      playable: true,
+      title: 'Same URL returned',
+      raw: { url: savedStream.raw.url }
+    }
+  ];
+
+  assert.strictEqual(
+    sandbox.getResumePositionMsFromEntry({ position: 123 }),
+    123000
+  );
+  assert.strictEqual(
+    sandbox.findResumeVideo({ video: { id: 'show:2:3', season: 2, episode: 3 } }).title,
+    'Third'
+  );
+  assert.strictEqual(
+    sandbox.findResumeVideo({ video: { season: 1, episode: 1 } }).title,
+    'Pilot'
+  );
+  assert.strictEqual(
+    sandbox.getPendingResumeStreamCandidate().title,
+    'Same URL returned'
+  );
+
+  sandbox.state.streams = [];
+  assert.strictEqual(
+    sandbox.getPendingResumeStreamCandidate().title,
+    '4K stream'
+  );
+
+  sandbox.state.transcodedPlaybackActive = true;
+  sandbox.state.transcodedSourceUrl = 'https://example.test/movie.mkv';
+  sandbox.state.transcodedOffsetMs = 120000;
+  sandbox.state.transcodedDurationMs = 5400000;
+  sandbox.state.durationMs = 5400000;
+
+  assert.strictEqual(sandbox.getTimelineCurrentMs(30000), 150000);
+  assert.strictEqual(sandbox.getTimelineDurationMs(90000), 5400000);
+
+  sandbox.resetTranscodedPlaybackState();
+  sandbox.state.allSeriesVideos = [];
+  sandbox.state.pendingResumeStream = null;
+  sandbox.state.streams = [];
+  sandbox.state.durationMs = 0;
+}
+
 [
   testSubtitleParsing,
   testContinueDedupe,
@@ -271,8 +436,10 @@ function testDtsVirtualAudioDetection() {
   testBrowsePaging,
   testBrowseGenreFiltering,
   testYearFilterDefaultAll,
+  testImdbRatingFilter,
   testMetadataFormatting,
-  testDtsVirtualAudioDetection
+  testDtsVirtualAudioDetection,
+  testResumeAndTranscodedTimelineHelpers
 ].forEach((testFn) => testFn());
 
 console.log('pure tests passed');

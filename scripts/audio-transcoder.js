@@ -145,12 +145,24 @@ function publicBaseUrl(req) {
   return `http://${hostHeader}`;
 }
 
+function normalizeStartSeconds(value) {
+  const seconds = Number(value || 0);
+
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    return 0;
+  }
+
+  return Math.max(0, Math.floor(seconds));
+}
+
 async function handleTranscode(req, res) {
   const body = await readBody(req);
   const sourceUrl = String(body.url || '').trim();
   const avoidCommentary = body.avoidCommentary !== false;
+  const startSeconds = normalizeStartSeconds(body.start);
   const audioStreams = sourceUrl ? await probeSource(sourceUrl) : [];
   const audio = chooseAudioStream(audioStreams, avoidCommentary);
+  const streamParams = new URLSearchParams();
   let streamUrl;
 
   if (!sourceUrl) {
@@ -163,9 +175,15 @@ async function handleTranscode(req, res) {
     return;
   }
 
-  streamUrl = `${publicBaseUrl(req)}/stream.ts?url=${encodeURIComponent(sourceUrl)}&audio=${encodeURIComponent(audio.index)}`;
+  streamParams.set('url', sourceUrl);
+  streamParams.set('audio', String(audio.index));
+  if (startSeconds > 0) {
+    streamParams.set('start', String(startSeconds));
+  }
+  streamUrl = `${publicBaseUrl(req)}/stream.ts?${streamParams.toString()}`;
   sendJson(res, 200, {
     url: streamUrl,
+    start: startSeconds,
     audio: {
       index: audio.index,
       codec: audio.codec_name || '',
@@ -180,10 +198,19 @@ async function handleTranscode(req, res) {
 function handleStream(req, res, parsedUrl) {
   const sourceUrl = String(parsedUrl.searchParams.get('url') || '').trim();
   const audioIndex = String(parsedUrl.searchParams.get('audio') || '').trim();
-  const child = sourceUrl && audioIndex ? spawn(ffmpegBin, [
+  const startSeconds = normalizeStartSeconds(parsedUrl.searchParams.get('start'));
+  const ffmpegArgs = [
     '-hide_banner',
     '-loglevel', 'error',
-    '-fflags', '+genpts',
+    '-fflags', '+genpts'
+  ];
+  let child;
+
+  if (startSeconds > 0) {
+    ffmpegArgs.push('-ss', String(startSeconds));
+  }
+
+  ffmpegArgs.push(
     '-i', sourceUrl,
     '-map', '0:v:0',
     '-map', `0:${audioIndex}`,
@@ -200,7 +227,9 @@ function handleStream(req, res, parsedUrl) {
     '-mpegts_flags', '+resend_headers',
     '-f', 'mpegts',
     'pipe:1'
-  ], {
+  );
+
+  child = sourceUrl && audioIndex ? spawn(ffmpegBin, ffmpegArgs, {
     stdio: ['ignore', 'pipe', 'pipe']
   }) : null;
 

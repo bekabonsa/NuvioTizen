@@ -186,7 +186,10 @@ function bindPlayer() {
     });
 
     video.addEventListener('loadedmetadata', refreshPlaybackTracks);
-    video.addEventListener('loadedmetadata', readHtml5Metrics);
+    video.addEventListener('loadedmetadata', function() {
+        readHtml5Metrics();
+        applyPendingResumeSeek();
+    });
     video.addEventListener('loadeddata', refreshPlaybackTracks);
     video.addEventListener('timeupdate', readHtml5Metrics);
     video.addEventListener('durationchange', refreshPlaybackTracks);
@@ -199,6 +202,8 @@ function bindPlayer() {
     });
     video.addEventListener('pause', function() {
         setPlayerToggleUi(false);
+        readHtml5Metrics();
+        saveCurrentPlaybackProgress(true);
         if (video.currentTime > 0) {
             setPlayerStatus('Paused');
         }
@@ -209,6 +214,7 @@ function bindPlayer() {
     video.addEventListener('ended', function() {
         stopPlaybackTicker();
         readHtml5Metrics();
+        saveCurrentPlaybackProgress(true);
         setPlayerToggleUi(false);
         setPlayerStatus('Finished');
     });
@@ -283,6 +289,9 @@ function handleLeft() {
     }
 
     if (exitFocusedYearFilter(-1)) {
+        return;
+    }
+    if (exitFocusedRatingFilter(-1)) {
         return;
     }
 
@@ -362,6 +371,9 @@ function handleRight() {
     if (exitFocusedYearFilter(1)) {
         return;
     }
+    if (exitFocusedRatingFilter(1)) {
+        return;
+    }
 
     if (state.currentView === 'search') {
         var searchPaneInfo = getSearchPaneInfo();
@@ -409,6 +421,9 @@ function handleUp() {
     if (moveFocusedYearFilter(-1)) {
         return;
     }
+    if (moveFocusedRatingFilter(-1)) {
+        return;
+    }
 
     if (state.focusRegion === 'nav') {
         return;
@@ -445,6 +460,9 @@ function handleDown() {
     }
 
     if (moveFocusedYearFilter(1)) {
+        return;
+    }
+    if (moveFocusedRatingFilter(1)) {
         return;
     }
 

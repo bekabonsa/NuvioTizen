@@ -482,9 +482,66 @@ function cloneContinueItem(item) {
     return clone;
 }
 
+function cloneStreamRaw(raw) {
+    var clone = {};
+    var keys = [
+        'url',
+        'externalUrl',
+        'infoHash',
+        'fileIdx',
+        'name',
+        'title',
+        'description',
+        'filename',
+        'behaviorHints',
+        'subtitles',
+        'sources',
+        'proxyHeaders'
+    ];
+
+    if (!raw || typeof raw !== 'object') {
+        return null;
+    }
+
+    keys.forEach(function(key) {
+        if (typeof raw[key] === 'undefined') {
+            return;
+        }
+
+        try {
+            clone[key] = JSON.parse(JSON.stringify(raw[key]));
+        } catch (error) {
+            clone[key] = raw[key];
+        }
+    });
+
+    return clone.url || clone.externalUrl || clone.infoHash ? clone : null;
+}
+
+function cloneContinueStream(streamEntry) {
+    var raw = streamEntry && streamEntry.raw ? cloneStreamRaw(streamEntry.raw) : null;
+
+    if (!streamEntry || !raw || !raw.url) {
+        return null;
+    }
+
+    return {
+        addonName: streamEntry.addonName || '',
+        addonBaseUrl: streamEntry.addonBaseUrl || '',
+        playable: streamEntry.playable !== false,
+        status: streamEntry.status || 'Playable',
+        title: streamEntry.title || raw.name || raw.title || raw.description || 'Saved stream',
+        description: streamEntry.description || raw.description || raw.title || '',
+        raw: raw
+    };
+}
+
 function normalizeContinueEntry(entry) {
     var item = entry && entry.item ? cloneContinueItem(entry.item) : null;
     var video = entry && entry.video ? entry.video : null;
+    var stream = entry && (entry.stream || entry.streamEntry || entry.currentStream)
+        ? cloneContinueStream(entry.stream || entry.streamEntry || entry.currentStream)
+        : null;
 
     if (!entry || !item || !entry.kind || !item.id) {
         return null;
@@ -500,6 +557,7 @@ function normalizeContinueEntry(entry) {
             episode: getVideoEpisode(video)
         } : null,
         progressKey: entry.progressKey || entry.progress_key || null,
+        stream: stream,
         position: typeof entry.position === 'number' ? entry.position : 0,
         duration: typeof entry.duration === 'number' ? entry.duration : 0,
         lastWatched: entry.lastWatched || entry.last_watched || null,
@@ -627,6 +685,7 @@ function trackContinueWatching(item, kind, video) {
         } : null,
         position: Math.max(0, Math.round((state.currentTimeMs || 0) / 1000)),
         duration: Math.max(0, Math.round((state.durationMs || 0) / 1000)),
+        stream: cloneContinueStream(state.currentStream),
         lastWatched: Date.now()
     };
     snapshot.progressKey = buildWatchProgressKey(kind, snapshot.item.id, snapshot.video);

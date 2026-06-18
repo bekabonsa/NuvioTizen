@@ -352,6 +352,10 @@ function createCard(item, kind) {
         card.setAttribute('aria-hidden', 'true');
     } else {
         card.addEventListener('click', function() {
+            if (options.continueEntry && typeof resumeContinueEntry === 'function') {
+                resumeContinueEntry(options.continueEntry);
+                return;
+            }
             prepareSelection(item, kind);
         });
     }
@@ -471,6 +475,7 @@ function renderHomeRailWindow(containerId, entries, key) {
             className: isActive ? 'is-home-active' : 'is-home-compact',
             imageUrl: (isActive || useBackgroundForAllCards) ? (item.background || item.poster) : item.poster,
             continueProgress: entry.continueProgress,
+            continueEntry: entry.continueEntry,
             metaText: isActive && (key === 'movies' || key === 'series')
                 ? formatHomeActiveMetaLine(item, entry.kind, key)
                 : entry.metaText,

@@ -1,3 +1,7 @@
+var PROGRESS_SAVE_INTERVAL_MS = 10000;
+var PROGRESS_SAVE_POSITION_DELTA_MS = 5000;
+var PROGRESS_SAVE_MIN_POSITION_MS = 5000;
+
 function resetTrackState() {
     state.audioTracks = [];
     state.subtitleTracks = [];
@@ -993,11 +997,81 @@ function updateProgressUi() {
         : 'Waiting for stream timing...';
 }
 
+function isTranscodedPlaybackActive() {
+    return !!(state.transcodedPlaybackActive && state.transcodedSourceUrl);
+}
+
+function resetTranscodedPlaybackState() {
+    state.transcodedPlaybackActive = false;
+    state.transcodedSourceUrl = '';
+    state.transcodedAudioTrack = null;
+    state.transcodedOffsetMs = 0;
+    state.transcodedDurationMs = 0;
+}
+
+function getTimelineCurrentMs(rawCurrentMs) {
+    var current = Math.max(0, rawCurrentMs || 0);
+
+    if (!isTranscodedPlaybackActive()) {
+        return current;
+    }
+
+    return Math.max(0, (state.transcodedOffsetMs || 0) + current);
+}
+
+function getTimelineDurationMs(rawDurationMs) {
+    var duration = Math.max(0, rawDurationMs || 0);
+    var sourceDuration;
+
+    if (!isTranscodedPlaybackActive()) {
+        return duration;
+    }
+
+    sourceDuration = Math.max(0, state.transcodedDurationMs || 0);
+    if (duration > 0) {
+        duration = Math.max(sourceDuration, (state.transcodedOffsetMs || 0) + duration);
+    }
+
+    return duration || sourceDuration || state.durationMs || 0;
+}
+
+function saveCurrentPlaybackProgress(force) {
+    var position = Math.max(0, state.currentTimeMs || 0);
+    var duration = Math.max(0, state.durationMs || 0);
+    var now;
+
+    if (state.suppressProgressSave) {
+        return false;
+    }
+
+    if (!state.selectedItem || !state.selectedType || !state.currentStream) {
+        return false;
+    }
+
+    if (!force && position < PROGRESS_SAVE_MIN_POSITION_MS) {
+        return false;
+    }
+
+    now = Date.now();
+    if (!force &&
+        now - (state.lastProgressSavedAt || 0) < PROGRESS_SAVE_INTERVAL_MS &&
+        Math.abs(position - (state.lastProgressSavedPositionMs || 0)) < PROGRESS_SAVE_POSITION_DELTA_MS) {
+        return false;
+    }
+
+    state.lastProgressSavedAt = now;
+    state.lastProgressSavedPositionMs = position;
+    trackContinueWatching(state.selectedItem, state.selectedType, state.selectedVideo);
+    renderContinueWatching();
+    return duration > 0 || position > 0;
+}
+
 function setPlaybackMetrics(currentMs, durationMs) {
     state.currentTimeMs = Math.max(0, currentMs || 0);
     state.durationMs = Math.max(0, durationMs || 0);
     updateProgressUi();
     updateSubtitleOverlay(state.currentTimeMs);
+    saveCurrentPlaybackProgress(false);
 }
 
 function resetPlaybackMetrics() {
@@ -1016,7 +1090,7 @@ function readHtml5Metrics() {
     var video = byId('videoPlayer');
     var current = isFinite(video.currentTime) ? video.currentTime * 1000 : 0;
     var duration = isFinite(video.duration) ? video.duration * 1000 : 0;
-    setPlaybackMetrics(current, duration);
+    setPlaybackMetrics(getTimelineCurrentMs(current), getTimelineDurationMs(duration));
 }
 
 function readAvplayMetrics() {
@@ -1039,7 +1113,7 @@ function readAvplayMetrics() {
         duration = duration || 0;
     }
 
-    setPlaybackMetrics(current, duration);
+    setPlaybackMetrics(getTimelineCurrentMs(current), getTimelineDurationMs(duration));
 }
 
 function stopPlaybackTicker() {
@@ -1085,6 +1159,35 @@ function startPlaybackTicker() {
     }, 500);
 }
 
+function applyPendingResumeSeek() {
+    var target = Math.max(0, state.pendingResumePositionMs || 0);
+
+    if (!target || !state.currentStream) {
+        return false;
+    }
+
+    state.pendingResumePositionMs = 0;
+    seekPlaybackTo(target, 'Resumed at ');
+    return true;
+}
+
+function restartTranscodedPlaybackAt(targetMs, statusPrefix) {
+    var target = Math.max(0, targetMs || 0);
+    var selectedTrack = state.transcodedAudioTrack;
+    var sourceUrl = state.transcodedSourceUrl;
+
+    if (!isTranscodedPlaybackActive() || !selectedTrack || !sourceUrl) {
+        return false;
+    }
+
+    state.transcodedOffsetMs = target;
+    state.transcodedDurationMs = Math.max(state.transcodedDurationMs || 0, state.durationMs || 0);
+    setPlaybackMetrics(target, getTimelineDurationMs(0));
+    setPlayerStatus('Seeking transcoded stream...');
+    startTranscodedDtsPlayback(selectedTrack, sourceUrl, target, statusPrefix || 'Skipped to ');
+    return true;
+}
+
 function seekPlaybackTo(targetMs, statusPrefix) {
     var video = byId('videoPlayer');
     var duration = state.durationMs || 0;
@@ -1105,6 +1208,11 @@ function seekPlaybackTo(targetMs, statusPrefix) {
     }
     target = Math.max(0, target);
 
+    if (isTranscodedPlaybackActive() && restartTranscodedPlaybackAt(target, statusPrefix)) {
+        saveCurrentPlaybackProgress(true);
+        return;
+    }
+
     if (state.playerMode === 'avplay' && hasAvplay()) {
         try {
             if (duration > 1000) {
@@ -1113,6 +1221,7 @@ function seekPlaybackTo(targetMs, statusPrefix) {
             webapis.avplay.seekTo(target, function() {
                 setPlaybackMetrics(target, duration);
                 setPlayerStatus((statusPrefix || 'Skipped to ') + formatPlaybackTime(target));
+                saveCurrentPlaybackProgress(true);
             }, function() {
                 setPlayerStatus('Seek failed');
             });
@@ -1127,6 +1236,7 @@ function seekPlaybackTo(targetMs, statusPrefix) {
         video.currentTime = target / 1000;
         readHtml5Metrics();
         setPlayerStatus((statusPrefix || 'Skipped to ') + formatPlaybackTime(target));
+        saveCurrentPlaybackProgress(true);
     } catch (error2) {
         setPlayerStatus('Seek failed');
     }
@@ -1224,12 +1334,16 @@ function hasAvplay() {
 function stopHtml5Playback() {
     var video = byId('videoPlayer');
     try {
+        state.suppressProgressSave = true;
         state.suppressNextHtml5AbortDiagnostic = true;
         video.pause();
         video.removeAttribute('src');
         video.load();
+        setTimeout(function() {
+            state.suppressProgressSave = false;
+        }, 0);
     } catch (error) {
-        // no-op
+        state.suppressProgressSave = false;
     }
 }
 
@@ -1362,6 +1476,7 @@ function clearPlaybackSurface() {
     stopAvplayPlayback();
     stopHtml5Playback();
     state.playerMode = 'html5';
+    resetTranscodedPlaybackState();
     resetWindowedAvplayFrame();
     resetTrackState();
     resetPlaybackMetrics();
@@ -1370,6 +1485,7 @@ function clearPlaybackSurface() {
 }
 
 function stopCurrentPlayback() {
+    saveCurrentPlaybackProgress(true);
     clearPlaybackSurface();
     setPlayerStatus('Stopped');
 }
@@ -1622,8 +1738,9 @@ function getAudioTranscoderBaseUrl() {
         .trim();
 }
 
-function requestDtsTranscodedStreamUrl(streamUrl, selectedTrack) {
+function requestDtsTranscodedStreamUrl(streamUrl, selectedTrack, startMs) {
     var baseUrl = getAudioTranscoderBaseUrl();
+    var startSeconds = Math.max(0, Math.floor((startMs || 0) / 1000));
 
     if (!baseUrl) {
         return Promise.reject(new Error('No audio transcoder is configured.'));
@@ -1634,14 +1751,27 @@ function requestDtsTranscodedStreamUrl(streamUrl, selectedTrack) {
         preferredCodec: 'dts',
         avoidCommentary: true,
         outputAudioCodec: 'ac3',
+        start: startSeconds,
         sourceLabel: selectedTrack ? selectedTrack.label : ''
     });
 }
 
-function startTranscodedDtsPlayback(selectedTrack, streamUrl) {
-    appendPlayerDiagnostic('info', 'Requesting DTS to AC3 transcode', selectedTrack.label);
+function startTranscodedDtsPlayback(selectedTrack, streamUrl, startMs, statusPrefix) {
+    var startPositionMs = Math.max(0, startMs || 0);
 
-    requestDtsTranscodedStreamUrl(streamUrl, selectedTrack).then(function(payload) {
+    state.transcodedPlaybackActive = true;
+    state.transcodedSourceUrl = streamUrl;
+    state.transcodedAudioTrack = selectedTrack;
+    state.transcodedOffsetMs = startPositionMs;
+    state.transcodedDurationMs = Math.max(state.transcodedDurationMs || 0, state.durationMs || 0);
+    setPlaybackMetrics(startPositionMs, getTimelineDurationMs(0));
+    appendPlayerDiagnostic(
+        'info',
+        startPositionMs > 0 ? 'Requesting DTS to AC3 transcode from offset' : 'Requesting DTS to AC3 transcode',
+        startPositionMs > 0 ? formatPlaybackTime(startPositionMs) + ' • ' + selectedTrack.label : selectedTrack.label
+    );
+
+    requestDtsTranscodedStreamUrl(streamUrl, selectedTrack, startPositionMs).then(function(payload) {
         var transcodedUrl = payload && payload.url ? payload.url : '';
         var audio = payload && payload.audio ? payload.audio : null;
 
@@ -1656,8 +1786,12 @@ function startTranscodedDtsPlayback(selectedTrack, streamUrl) {
             'Playing detected DTS track as AC3',
             audio && audio.label ? audio.label : selectedTrack.label
         );
+        if (startPositionMs > 0) {
+            setPlayerStatus((statusPrefix || 'Skipped to ') + formatPlaybackTime(startPositionMs));
+        }
         startAvplayStream(transcodedUrl);
     }).catch(function(error) {
+        resetTranscodedPlaybackState();
         markAudioTrackFailure(selectedTrack.id);
         appendPlayerDiagnostic('error', 'DTS to AC3 transcode failed', error);
     });
@@ -1679,7 +1813,7 @@ function selectVirtualAudioTrack(selectedTrack) {
     );
 
     if (getAudioTranscoderBaseUrl()) {
-        startTranscodedDtsPlayback(selectedTrack, streamUrl);
+        startTranscodedDtsPlayback(selectedTrack, streamUrl, state.currentTimeMs || 0);
         return;
     }
 

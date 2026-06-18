@@ -383,6 +383,7 @@ function buildContinueEntries() {
         return {
             item: entry.item,
             kind: entry.kind,
+            continueEntry: entry,
             continueProgress: getContinueProgress(entry),
             metaText: entry.kind === 'series' && entry.video
                 ? 'Resume • Season ' + entry.video.season + ' • Episode ' + entry.video.episode
@@ -945,19 +946,35 @@ function formatItemRuntime(item) {
 function getItemGenreLabel(item, fallbackGenre) {
     var value = item && (item.genres || item.genre);
     var genres;
+    var output = [];
+
+    function pushLabel(label) {
+        var normalized = normalizeGenreLabel(label);
+
+        if (!normalized || output.some(function(existing) {
+            return normalizeGenreLabel(existing) === normalized;
+        })) {
+            return;
+        }
+
+        output.push(label);
+    }
 
     if (Array.isArray(value)) {
         genres = value.map(function(genre) {
             return String(genre || '').trim();
         }).filter(Boolean);
-        if (genres.length) {
-            return genres.slice(0, 2).join(' / ');
-        }
-    }
-    if (typeof value === 'string' && value) {
-        return value.split(',').map(function(part) {
+    } else if (typeof value === 'string' && value) {
+        genres = value.split(',').map(function(part) {
             return part.trim();
-        }).filter(Boolean).slice(0, 2).join(' / ');
+        }).filter(Boolean);
+    } else {
+        genres = [];
+    }
+
+    genres.forEach(pushLabel);
+    if (output.length) {
+        return output.slice(0, 2).join(' / ');
     }
 
     return fallbackGenre || '';
@@ -975,9 +992,11 @@ function getHomeGenreFallback(key) {
 }
 
 function formatHomeActiveMetaLine(item, kind, key) {
+    var fallbackGenre = getHomeGenreFallback(key);
+
     return [
         item && item.imdbRating ? 'IMDb ' + item.imdbRating : '',
-        getItemGenreLabel(item, getHomeGenreFallback(key)),
+        getItemGenreLabel(item, fallbackGenre),
         formatItemRuntime(item),
         item && (item.releaseInfo || item.year) || ''
     ].filter(Boolean).join(' • ') || formatMetaLine(item, kind === 'movie' ? 'Movie' : 'Series');

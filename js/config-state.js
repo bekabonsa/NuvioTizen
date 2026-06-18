@@ -28,6 +28,7 @@ var CINEMETA_SERIES_GENRES = ['Action', 'Adventure', 'Animation', 'Comedy', 'Dra
 var CINEMETA_SERIES_EXPANSION_GENRES = ['Action', 'Adventure', 'Animation', 'Comedy', 'Drama', 'Fantasy', 'Sci-Fi'];
 var CINEMETA_YEAR_FILTERS = buildDescendingYearList(2026, 1960);
 var CINEMETA_EXPANSION_YEAR_FILTERS = buildDescendingYearList(2026, 1960);
+var IMDB_RATING_FILTERS = ['9', '8', '7', '6', '5', '4', '3', '2', '1'];
 var YEAR_FILTER_WINDOW_SIZE = 3;
 var CINEMETA_MOVIE_SEARCH_SEEDS = ['the', 'love', 'life', 'night', 'day', 'man', 'girl', 'dark', 'city', 'family', 'last', 'first', 'new', 'old', 'house', 'king', 'school', 'space', 'star', 'time', 'game', 'home'];
 var CINEMETA_SERIES_SEARCH_SEEDS = ['the', 'love', 'life', 'night', 'day', 'war', 'dark', 'city', 'family', 'first', 'new', 'old', 'house', 'queen', 'school', 'doctor', 'space', 'star', 'time', 'secret', 'story', 'game', 'home'];
@@ -48,6 +49,7 @@ var BROWSE_PAGE_SIZE = 25;
 var BROWSE_LOAD_MORE_SIZE = BROWSE_PAGE_SIZE * 2;
 var CINEMETA_CATALOG_PAGE_SIZE = 50;
 var BROWSE_EXPANSION_BATCH_SIZE = 4;
+var RATING_BROWSE_SCAN_PAGE_LIMIT = 20;
 var FORCE_AVPLAY_DEBUG = false;
 var PLAYER_SCRUB_INITIAL_NUDGE_MS = 5000;
 var PLAYER_SCRUB_TICK_MS = 50;
@@ -200,6 +202,8 @@ var state = {
     selectedSeriesGenre: '',
     selectedMovieYear: '',
     selectedSeriesYear: '',
+    selectedMovieRating: '',
+    selectedSeriesRating: '',
     movieBrowseItems: [],
     seriesBrowseItems: [],
     movieSkip: 0,
@@ -216,6 +220,12 @@ var state = {
     seriesYearFilterOpen: false,
     movieYearFocusIndex: 0,
     seriesYearFocusIndex: 0,
+    movieRatingWindowStart: 0,
+    seriesRatingWindowStart: 0,
+    movieRatingFilterOpen: false,
+    seriesRatingFilterOpen: false,
+    movieRatingFocusIndex: 0,
+    seriesRatingFocusIndex: 0,
     searchQuery: '',
     searchScope: 'all',
     searchMovies: [],
@@ -248,6 +258,11 @@ var state = {
     subtitleRequestId: 0,
     currentTimeMs: 0,
     durationMs: 0,
+    pendingResumePositionMs: 0,
+    pendingResumeStream: null,
+    lastProgressSavedAt: 0,
+    lastProgressSavedPositionMs: 0,
+    suppressProgressSave: false,
     playbackTicker: null,
     suppressNextHtml5AbortDiagnostic: false,
     playerChromeTimer: null,
@@ -259,6 +274,11 @@ var state = {
     seekPreviewTimer: null,
     playerMode: 'html5',
     playerFullscreen: false,
+    transcodedPlaybackActive: false,
+    transcodedSourceUrl: '',
+    transcodedAudioTrack: null,
+    transcodedOffsetMs: 0,
+    transcodedDurationMs: 0,
     currentView: 'home',
     viewHistory: [],
     browseReturnState: {

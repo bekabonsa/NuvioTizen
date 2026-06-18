@@ -922,6 +922,7 @@ function startHtml5Stream(url) {
             readHtml5Metrics();
             startPlaybackTicker();
             scheduleTrackRefresh();
+            applyPendingResumeSeek();
         }).catch(function(error) {
             if (state.suppressNextHtml5AbortDiagnostic && error && error.name === 'AbortError') {
                 state.suppressNextHtml5AbortDiagnostic = false;
@@ -934,6 +935,10 @@ function startHtml5Stream(url) {
         });
     } else {
         setPlayerToggleUi(true);
+        readHtml5Metrics();
+        startPlaybackTicker();
+        scheduleTrackRefresh();
+        applyPendingResumeSeek();
     }
 }
 
@@ -970,10 +975,11 @@ function startAvplayStream(url) {
                 refreshPlaybackTracks();
             },
             oncurrentplaytime: function(currentTime) {
-                setPlaybackMetrics(currentTime, state.durationMs);
+                setPlaybackMetrics(getTimelineCurrentMs(currentTime), getTimelineDurationMs(state.durationMs));
             },
             onstreamcompleted: function() {
                 readAvplayMetrics();
+                saveCurrentPlaybackProgress(true);
                 setPlayerToggleUi(false);
                 setPlayerStatus('Finished');
             },
@@ -998,6 +1004,7 @@ function startAvplayStream(url) {
                 readAvplayMetrics();
                 startPlaybackTicker();
                 scheduleTrackRefresh();
+                applyPendingResumeSeek();
             } catch (playError) {
                 setPlayerToggleUi(false);
                 setPlayerStatus('AVPlay play failed');
@@ -1036,6 +1043,8 @@ function toggleCurrentPlayback() {
                 setPlayerStatus('Playing (AVPlay)');
             } else {
                 webapis.avplay.pause();
+                readAvplayMetrics();
+                saveCurrentPlaybackProgress(true);
                 setPlayerToggleUi(false);
                 setPlayerStatus('Paused (AVPlay)');
             }
@@ -1066,6 +1075,7 @@ function loadCurrentStream() {
     }
 
     resetTrackState();
+    resetTranscodedPlaybackState();
     syncExternalSubtitleTracks();
     renderTrackSelectors();
     refreshSubtitleAddonsForCurrentStream();
@@ -1081,8 +1091,8 @@ function openStream(streamEntry) {
     resetTrackState();
     clearPlayerDiagnostics();
     state.currentStream = streamEntry;
-    trackContinueWatching(state.selectedItem, state.selectedType, state.selectedVideo);
-    renderContinueWatching();
+    state.lastProgressSavedAt = 0;
+    state.lastProgressSavedPositionMs = 0;
     renderPlayerState();
     setView('player', {
         focusRegion: 'main',
@@ -1150,7 +1160,96 @@ function fetchMetaFromAddons(type, id) {
     return requestNext(0);
 }
 
+function getResumePositionMsFromEntry(entry) {
+    return entry && typeof entry.position === 'number'
+        ? Math.max(0, Math.round(entry.position * 1000))
+        : 0;
+}
+
+function streamsMatchByUrl(left, right) {
+    var leftUrl = left && left.raw && left.raw.url ? String(left.raw.url) : '';
+    var rightUrl = right && right.raw && right.raw.url ? String(right.raw.url) : '';
+
+    return !!(leftUrl && rightUrl && leftUrl === rightUrl);
+}
+
+function getPendingResumeStreamCandidate() {
+    var savedStream = state.pendingResumeStream;
+    var matchingStream;
+
+    if (!savedStream || !savedStream.raw || !savedStream.raw.url) {
+        return null;
+    }
+
+    matchingStream = state.streams.filter(function(entry) {
+        return entry.playable && streamsMatchByUrl(entry, savedStream);
+    })[0];
+
+    if (matchingStream) {
+        return matchingStream;
+    }
+
+    return savedStream.playable !== false ? savedStream : null;
+}
+
+function findResumeVideo(entry) {
+    var targetVideo = entry && entry.video ? entry.video : null;
+    var targetSeason;
+    var targetEpisode;
+    var byId;
+
+    if (!targetVideo || !state.allSeriesVideos.length) {
+        return null;
+    }
+
+    if (targetVideo.id) {
+        byId = state.allSeriesVideos.filter(function(video) {
+            return video.id === targetVideo.id;
+        })[0];
+        if (byId) {
+            return byId;
+        }
+    }
+
+    targetSeason = getVideoSeason(targetVideo);
+    targetEpisode = getVideoEpisode(targetVideo);
+    return state.allSeriesVideos.filter(function(video) {
+        return getVideoSeason(video) === targetSeason && getVideoEpisode(video) === targetEpisode;
+    })[0] || null;
+}
+
+function applyResumeVideoSelection(entry) {
+    var video = findResumeVideo(entry);
+
+    if (!video) {
+        return false;
+    }
+
+    state.selectedSeason = getVideoSeason(video);
+    state.selectedVideo = video;
+    return true;
+}
+
+function resumeContinueEntry(entry) {
+    var normalized = normalizeContinueEntry(entry);
+
+    if (!normalized) {
+        return;
+    }
+
+    prepareSelection(normalized.item, normalized.kind, {
+        autoplayFirst: true,
+        resumeEntry: normalized,
+        resumePositionMs: getResumePositionMsFromEntry(normalized)
+    });
+}
+
 function prepareSelection(item, type, options) {
+    var resumeEntry = options && options.resumeEntry ? normalizeContinueEntry(options.resumeEntry) : null;
+    var resumePositionMs = options && typeof options.resumePositionMs === 'number'
+        ? Math.max(0, options.resumePositionMs)
+        : getResumePositionMsFromEntry(resumeEntry);
+
     captureBrowseReturnState();
     state.selectedItem = item;
     state.selectedType = type;
@@ -1162,6 +1261,8 @@ function prepareSelection(item, type, options) {
     state.selectedVideo = null;
     state.streams = [];
     state.autoplayPending = !!(options && options.autoplayFirst);
+    state.pendingResumePositionMs = state.autoplayPending ? resumePositionMs : 0;
+    state.pendingResumeStream = state.autoplayPending && resumeEntry && resumeEntry.stream ? resumeEntry.stream : null;
     renderAddons();
 
     setView('addons', {
@@ -1183,9 +1284,12 @@ function prepareSelection(item, type, options) {
                 });
                 state.availableSeasons = seasons;
                 state.selectedSeason = seasons.length ? seasons[0] : null;
+                applyResumeVideoSelection(resumeEntry);
                 updateSelectedEpisodesForSeason();
                 renderAddons();
                 if (!state.selectedVideo) {
+                    state.pendingResumePositionMs = 0;
+                    state.pendingResumeStream = null;
                     setAddonsMessage('No episode metadata was returned for this series.', 'error');
                     return;
                 }
@@ -1234,12 +1338,23 @@ function loadStreamsForSelection(options) {
 
     if (!state.selectedItem || !type || !videoId) {
         setAddonsMessage('Choose a title first.', 'error');
+        state.pendingResumePositionMs = 0;
+        state.pendingResumeStream = null;
         return Promise.resolve();
     }
 
     eligibleAddons = getStreamCapableAddons(type, videoId);
     if (!eligibleAddons.length) {
+        var savedPlayable = state.autoplayPending ? getPendingResumeStreamCandidate() : null;
+        state.autoplayPending = false;
+        if (savedPlayable) {
+            state.pendingResumeStream = null;
+            openStream(savedPlayable);
+            return Promise.resolve();
+        }
         state.streams = [];
+        state.pendingResumePositionMs = 0;
+        state.pendingResumeStream = null;
         renderStreamList();
         setAddonsMessage(
             state.authKey
@@ -1275,14 +1390,18 @@ function loadStreamsForSelection(options) {
         if (state.streams.length) {
             setAddonsMessage('Loaded ' + state.streams.length + ' stream entries.', 'success');
             if (state.autoplayPending) {
+                var resumeStream = getPendingResumeStreamCandidate();
                 state.autoplayPending = false;
-                var playable = state.streams.filter(function(entry) {
+                var playable = resumeStream || state.streams.filter(function(entry) {
                     return entry.playable && entry.raw && entry.raw.url;
                 })[0];
                 if (playable) {
+                    state.pendingResumeStream = null;
                     openStream(playable);
                     return;
                 }
+                state.pendingResumePositionMs = 0;
+                state.pendingResumeStream = null;
             }
             if (shouldFocusStreams) {
                 state.focusRegion = 'main';
@@ -1291,6 +1410,15 @@ function loadStreamsForSelection(options) {
             }
             setTimeout(focusCurrent, 0);
         } else {
+            var savedPlayable = state.autoplayPending ? getPendingResumeStreamCandidate() : null;
+            state.autoplayPending = false;
+            if (savedPlayable) {
+                state.pendingResumeStream = null;
+                openStream(savedPlayable);
+                return;
+            }
+            state.pendingResumePositionMs = 0;
+            state.pendingResumeStream = null;
             setAddonsMessage('No stream entries were returned.', 'error');
             if (shouldFocusStreams) {
                 if (state.selectedType === 'series') {
