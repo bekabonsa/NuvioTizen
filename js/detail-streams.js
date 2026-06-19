@@ -802,6 +802,309 @@ function applySelectedItemFallbacks(fallbackItem) {
     }
 }
 
+function getImdbApiBaseUrl() {
+    return String(typeof IMDB_API_BASE_URL === 'undefined' ? '' : IMDB_API_BASE_URL)
+        .replace(/\/+$/, '');
+}
+
+function getImdbApiDetailKey(type, id) {
+    return String(type || '') + ':' + String(id || '');
+}
+
+function getImdbApiTitleImageUrl(title) {
+    return title && title.primaryImage && title.primaryImage.url ? title.primaryImage.url : '';
+}
+
+function getImdbApiTitleRating(title) {
+    return title && title.rating && typeof title.rating.aggregateRating === 'number'
+        ? Number(title.rating.aggregateRating.toFixed(1))
+        : null;
+}
+
+function getImdbApiTitleVoteCount(title) {
+    return title && title.rating && typeof title.rating.voteCount === 'number'
+        ? title.rating.voteCount
+        : null;
+}
+
+function getImdbApiTitleRuntime(title) {
+    return title && title.runtimeSeconds ? Math.round(Number(title.runtimeSeconds) / 60) : null;
+}
+
+function getImdbApiTitleYear(title) {
+    return title && title.startYear ? String(title.startYear) : '';
+}
+
+function getImdbApiTitleReleaseInfo(title, fallbackItem) {
+    var startYear = title && title.startYear ? String(title.startYear) : '';
+    var endYear = title && title.endYear ? String(title.endYear) : '';
+
+    if (startYear && endYear && startYear !== endYear) {
+        return startYear + '-' + endYear;
+    }
+    return startYear || fallbackItem && fallbackItem.releaseInfo || fallbackItem && fallbackItem.year || '';
+}
+
+function requestImdbApiTitle(id) {
+    var baseUrl = getImdbApiBaseUrl();
+    var key = String(id || '');
+
+    if (!baseUrl || !key) {
+        return Promise.resolve(null);
+    }
+    if (Object.prototype.hasOwnProperty.call(imdbApiTitleCache, key)) {
+        return Promise.resolve(imdbApiTitleCache[key]);
+    }
+    if (imdbApiTitlePending[key]) {
+        return imdbApiTitlePending[key];
+    }
+
+    imdbApiTitlePending[key] = scheduleRequest('meta', function() {
+        return requestJson(baseUrl + '/titles/' + encodeURIComponent(key), 'GET');
+    }).then(function(payload) {
+        imdbApiTitleCache[key] = payload || null;
+        delete imdbApiTitlePending[key];
+        return imdbApiTitleCache[key];
+    }).catch(function(error) {
+        delete imdbApiTitlePending[key];
+        throw error;
+    });
+
+    return imdbApiTitlePending[key];
+}
+
+function requestImdbApiCredits(id) {
+    var baseUrl = getImdbApiBaseUrl();
+    var key = String(id || '');
+    var limit = Math.max(1, Math.min(50, Number(DETAIL_CAST_LIMIT || 10) || 10));
+    var url;
+
+    if (!baseUrl || !key) {
+        return Promise.resolve(null);
+    }
+    if (Object.prototype.hasOwnProperty.call(imdbApiCreditsCache, key)) {
+        return Promise.resolve(imdbApiCreditsCache[key]);
+    }
+    if (imdbApiCreditsPending[key]) {
+        return imdbApiCreditsPending[key];
+    }
+
+    url = baseUrl
+        + '/titles/'
+        + encodeURIComponent(key)
+        + '/credits?pageSize='
+        + encodeURIComponent(String(limit))
+        + '&categories=actor&categories=actress';
+
+    imdbApiCreditsPending[key] = scheduleRequest('meta', function() {
+        return requestJson(url, 'GET');
+    }).then(function(payload) {
+        imdbApiCreditsCache[key] = payload || null;
+        delete imdbApiCreditsPending[key];
+        return imdbApiCreditsCache[key];
+    }).catch(function(error) {
+        delete imdbApiCreditsPending[key];
+        throw error;
+    });
+
+    return imdbApiCreditsPending[key];
+}
+
+function mergeImdbApiTitleIntoItem(item, title) {
+    var output = {};
+    var poster = getImdbApiTitleImageUrl(title);
+    var rating = getImdbApiTitleRating(title);
+    var votes = getImdbApiTitleVoteCount(title);
+    var runtime = getImdbApiTitleRuntime(title);
+    var genres = Array.isArray(title && title.genres) ? title.genres.filter(Boolean) : [];
+
+    Object.keys(item || {}).forEach(function(key) {
+        output[key] = item[key];
+    });
+
+    if (!title) {
+        return output;
+    }
+
+    output.id = output.id || title.id;
+    output.imdb_id = output.imdb_id || title.id;
+    output.name = output.name || title.primaryTitle || title.originalTitle;
+    output.poster = output.poster || poster;
+    output.background = output.background || poster;
+    output.description = output.description || title.plot;
+    output.releaseInfo = getImdbApiTitleReleaseInfo(title, output);
+    output.year = output.year || getImdbApiTitleYear(title);
+    if (rating !== null) {
+        output.imdbRating = rating;
+    }
+    if (votes !== null) {
+        output.imdbVotes = votes;
+    }
+    if (runtime) {
+        output.runtime = output.runtime || runtime;
+    }
+    if (genres.length) {
+        output.genres = genres;
+        output.genre = genres;
+    }
+
+    return output;
+}
+
+function applySelectedImdbApiTitleToSelection() {
+    if (!state.selectedItem || !state.selectedImdbApiTitle) {
+        return;
+    }
+
+    state.selectedItem = mergeImdbApiTitleIntoItem(state.selectedItem, state.selectedImdbApiTitle);
+}
+
+function getCastImageUrl(credit) {
+    return credit && credit.name && credit.name.primaryImage && credit.name.primaryImage.url
+        ? credit.name.primaryImage.url
+        : '';
+}
+
+function getCastInitials(name) {
+    var parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+
+    if (!parts.length) {
+        return '?';
+    }
+
+    return parts.slice(0, 2).map(function(part) {
+        return part.charAt(0).toUpperCase();
+    }).join('');
+}
+
+function normalizeImdbApiCast(payload) {
+    var seen = {};
+    var limit = Math.max(1, Number(DETAIL_CAST_LIMIT || 10) || 10);
+    var credits = payload && Array.isArray(payload.credits) ? payload.credits : [];
+    var cast = [];
+
+    credits.some(function(credit) {
+        var name = credit && credit.name;
+        var id = name && (name.id || name.displayName);
+        var role;
+
+        if (!name || !name.displayName || !id || seen[id]) {
+            return false;
+        }
+
+        seen[id] = true;
+        role = Array.isArray(credit.characters) && credit.characters.length
+            ? credit.characters.join(', ')
+            : credit.category || '';
+        cast.push({
+            id: id,
+            name: name.displayName,
+            image: getCastImageUrl(credit),
+            role: role
+        });
+
+        return cast.length >= limit;
+    });
+
+    return cast;
+}
+
+function normalizeImdbApiTitleStars(title) {
+    var limit = Math.max(1, Number(DETAIL_CAST_LIMIT || 10) || 10);
+    var stars = title && Array.isArray(title.stars) ? title.stars : [];
+
+    return stars.slice(0, limit).map(function(star) {
+        return {
+            id: star.id || star.displayName,
+            name: star.displayName || '',
+            image: star.primaryImage && star.primaryImage.url ? star.primaryImage.url : '',
+            role: ''
+        };
+    }).filter(function(member) {
+        return !!member.name;
+    });
+}
+
+function renderDetailCast() {
+    var section = byId('detailCastSection');
+    var row = byId('detailCastRow');
+    var fragment;
+
+    if (!section || !row) {
+        return;
+    }
+
+    row.innerHTML = '';
+    if (!state.selectedItem || !state.selectedCast || !state.selectedCast.length) {
+        section.hidden = true;
+        return;
+    }
+
+    section.hidden = false;
+    fragment = document.createDocumentFragment();
+    state.selectedCast.forEach(function(member) {
+        var wrapper = document.createElement('div');
+        var avatar = document.createElement('div');
+        var name = document.createElement('div');
+        var role = document.createElement('div');
+        var image;
+
+        wrapper.className = 'cast-member';
+        avatar.className = 'cast-avatar';
+        if (member.image) {
+            image = document.createElement('img');
+            image.decoding = 'async';
+            image.loading = 'lazy';
+            image.alt = member.name;
+            image.src = member.image;
+            image.onerror = function() {
+                avatar.innerHTML = '';
+                avatar.textContent = getCastInitials(member.name);
+            };
+            avatar.appendChild(image);
+        } else {
+            avatar.textContent = getCastInitials(member.name);
+        }
+
+        name.className = 'cast-name';
+        name.textContent = member.name;
+        role.className = 'cast-role';
+        role.textContent = member.role || '';
+
+        wrapper.appendChild(avatar);
+        wrapper.appendChild(name);
+        if (role.textContent) {
+            wrapper.appendChild(role);
+        }
+        fragment.appendChild(wrapper);
+    });
+    row.appendChild(fragment);
+}
+
+function loadImdbApiSelectionDetails(type, id) {
+    var requestKey = getImdbApiDetailKey(type, id);
+
+    return Promise.all([
+        requestImdbApiTitle(id).catch(function() { return null; }),
+        requestImdbApiCredits(id).catch(function() { return null; })
+    ]).then(function(results) {
+        var title = results[0];
+        var credits = results[1];
+
+        if (state.selectedDetailRequestKey !== requestKey) {
+            return;
+        }
+
+        state.selectedImdbApiTitle = title || null;
+        state.selectedCast = normalizeImdbApiCast(credits);
+        if (!state.selectedCast.length) {
+            state.selectedCast = normalizeImdbApiTitleStars(title);
+        }
+        applySelectedImdbApiTitleToSelection();
+        renderAddons();
+    });
+}
+
 function renderAddons() {
     var detailArtwork = byId('detailArtwork');
     var selectedTypeSummary = byId('selectedTypeSummary');
@@ -822,6 +1125,7 @@ function renderAddons() {
         detailEpisodesButton.disabled = true;
         detailEpisodesButton.setAttribute('aria-hidden', 'true');
         detailArtwork.style.backgroundImage = 'linear-gradient(180deg, rgba(9, 11, 17, 0.18), rgba(9, 11, 17, 0.42)), #0b0d14';
+        renderDetailCast();
     } else {
         byId('selectedTitle').textContent = state.selectedItem.name || 'Untitled';
         byId('selectedTypeLabel').textContent = getSelectedKindLabel();
@@ -839,6 +1143,7 @@ function renderAddons() {
         detailArtwork.style.backgroundImage = state.selectedItem.background || state.selectedItem.poster
             ? 'linear-gradient(180deg, rgba(9, 11, 17, 0.18), rgba(9, 11, 17, 0.42)), url("' + (state.selectedItem.background || state.selectedItem.poster) + '")'
             : 'linear-gradient(180deg, rgba(9, 11, 17, 0.18), rgba(9, 11, 17, 0.42)), #0b0d14';
+        renderDetailCast();
     }
 
     updateLibraryButtonUi();
@@ -1253,6 +1558,9 @@ function prepareSelection(item, type, options) {
     captureBrowseReturnState();
     state.selectedItem = item;
     state.selectedType = type;
+    state.selectedImdbApiTitle = null;
+    state.selectedCast = [];
+    state.selectedDetailRequestKey = getImdbApiDetailKey(type, item && item.id);
     state.detailMode = 'details';
     state.allSeriesVideos = [];
     state.availableSeasons = [];
@@ -1264,6 +1572,7 @@ function prepareSelection(item, type, options) {
     state.pendingResumePositionMs = state.autoplayPending ? resumePositionMs : 0;
     state.pendingResumeStream = state.autoplayPending && resumeEntry && resumeEntry.stream ? resumeEntry.stream : null;
     renderAddons();
+    loadImdbApiSelectionDetails(type, item && item.id);
 
     setView('addons', {
         focusRegion: 'main',
@@ -1278,6 +1587,7 @@ function prepareSelection(item, type, options) {
                 var seasons;
                 state.selectedItem = meta || item;
                 applySelectedItemFallbacks(item);
+                applySelectedImdbApiTitleToSelection();
                 state.allSeriesVideos = meta && Array.isArray(meta.videos) ? meta.videos.slice() : [];
                 seasons = uniqueList(state.allSeriesVideos.map(getVideoSeason)).sort(function(left, right) {
                     return left - right;
@@ -1317,6 +1627,7 @@ function prepareSelection(item, type, options) {
 
             state.selectedItem = meta || item;
             applySelectedItemFallbacks(item);
+            applySelectedImdbApiTitleToSelection();
             state.selectedVideo = {
                 id: state.selectedItem.id || item.id,
                 title: state.selectedItem.name || item.name

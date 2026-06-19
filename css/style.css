@@ -1095,6 +1095,70 @@ body[data-current-view="player"] .content-row.is-row-far {
     max-width: 680px;
 }
 
+.detail-cast-section {
+    margin-top: 20px;
+    max-width: 680px;
+}
+
+.detail-cast-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px 12px;
+    margin-top: 12px;
+    overflow: hidden;
+}
+
+.cast-member {
+    width: 70px;
+    min-width: 70px;
+    text-align: center;
+}
+
+.cast-avatar {
+    width: 58px;
+    height: 58px;
+    margin: 0 auto 8px;
+    display: grid;
+    place-items: center;
+    overflow: hidden;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    color: #fff;
+    font-size: 17px;
+    font-weight: 800;
+}
+
+.cast-avatar img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.cast-name,
+.cast-role {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+}
+
+.cast-name {
+    -webkit-line-clamp: 2;
+    color: #fff;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1.15;
+}
+
+.cast-role {
+    -webkit-line-clamp: 1;
+    margin-top: 4px;
+    color: var(--muted);
+    font-size: 10px;
+    line-height: 1.2;
+}
+
 .detail-actions {
     margin-top: 24px;
 }

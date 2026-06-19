@@ -261,11 +261,10 @@ function testImdbRatingFilter() {
 
   sandbox.state.selectedMovieGenre = actionOption.key;
   const combined = sandbox.getSelectedRatingCombinedOptions('movie');
-  assert.strictEqual(combined.sourceOption.catalogId, 'imdbRating');
-  assert.strictEqual(combined.sourceOption.extraArgs.genre, 'Action');
+  assert.strictEqual(combined.genreLabel, 'Action');
   assert.strictEqual(
-    sandbox.buildCatalogRequestUrl(combined.sourceOption, 50),
-    'https://v3-cinemeta.strem.io/catalog/movie/imdbRating/genre=Action&skip=50.json'
+    sandbox.buildImdbCatalogApiUrl('movie', combined, 50, 50),
+    'http://10.0.0.10:8791/catalog/movie?rating=7&genre=Action&skip=50&limit=50'
   );
 
   sandbox.state.selectedMovieRating = '';
@@ -302,6 +301,168 @@ function testMetadataFormatting() {
   sandbox.state.selectedType = null;
   assert.deepStrictEqual(cloned.genres, ['Action', 'Adventure', 'Drama']);
   assert.strictEqual(cloned.runtime, 124);
+}
+
+function testImdbApiDetailHelpers() {
+  const title = {
+    id: 'tt1375666',
+    primaryTitle: 'Inception',
+    startYear: 2010,
+    runtimeSeconds: 8880,
+    plot: 'A thief enters dreams.',
+    genres: ['Action', 'Adventure', 'Sci-Fi'],
+    primaryImage: { url: 'https://image.example/inception.jpg' },
+    rating: {
+      aggregateRating: 8.8,
+      voteCount: 2800000
+    }
+  };
+  const merged = sandbox.mergeImdbApiTitleIntoItem({
+    id: 'tt1375666',
+    type: 'movie',
+    name: 'Inception',
+    background: 'https://image.example/backdrop.jpg'
+  }, title);
+  const cast = sandbox.normalizeImdbApiCast({
+    credits: [
+      {
+        name: {
+          id: 'nm1',
+          displayName: 'Leonardo DiCaprio',
+          primaryImage: { url: 'https://image.example/leo.jpg' }
+        },
+        category: 'actor',
+        characters: ['Cobb']
+      },
+      {
+        name: {
+          id: 'nm1',
+          displayName: 'Leonardo DiCaprio'
+        },
+        category: 'actor',
+        characters: ['Duplicate']
+      },
+      {
+        name: {
+          id: 'nm2',
+          displayName: 'Marion Cotillard'
+        },
+        category: 'actress',
+        characters: ['Mal']
+      }
+    ]
+  });
+  const starCast = sandbox.normalizeImdbApiTitleStars({
+    stars: [
+      {
+        id: 'nm3',
+        displayName: 'Joseph Gordon-Levitt',
+        primaryImage: { url: 'https://image.example/jgl.jpg' }
+      }
+    ]
+  });
+
+  assert.strictEqual(merged.poster, 'https://image.example/inception.jpg');
+  assert.strictEqual(merged.background, 'https://image.example/backdrop.jpg');
+  assert.strictEqual(merged.imdbRating, 8.8);
+  assert.strictEqual(merged.imdbVotes, 2800000);
+  assert.strictEqual(merged.runtime, 148);
+  assert.deepStrictEqual(merged.genres, ['Action', 'Adventure', 'Sci-Fi']);
+  assert.strictEqual(cast.length, 2);
+  assert.strictEqual(cast[0].image, 'https://image.example/leo.jpg');
+  assert.strictEqual(cast[0].role, 'Cobb');
+  assert.strictEqual(cast[1].name, 'Marion Cotillard');
+  assert.strictEqual(starCast[0].name, 'Joseph Gordon-Levitt');
+  assert.strictEqual(starCast[0].image, 'https://image.example/jgl.jpg');
+}
+
+async function testBrowseArtworkEnrichment() {
+  const previousFetchMeta = sandbox.fetchMetaFromAddons;
+  let calls = 0;
+
+  sandbox.browseArtworkMetaCache = {};
+  sandbox.browseArtworkMetaPending = {};
+  sandbox.fetchMetaFromAddons = (type, id) => {
+    calls += 1;
+    assert.strictEqual(type, 'movie');
+    return Promise.resolve({
+      poster: `https://images.example/${id}/poster.jpg`,
+      background: `https://images.example/${id}/background.jpg`,
+      description: 'Resolved metadata',
+      genres: ['Action', 'Drama']
+    });
+  };
+
+  try {
+    const enriched = await sandbox.enrichBrowseItemsWithArtwork('movie', [
+      {
+        id: 'tt-art',
+        name: 'Generated Art',
+        poster: 'https://live.metahub.space/poster/small/tt-art/img',
+        background: 'https://live.metahub.space/background/medium/tt-art/img',
+        imdbRating: 8.5,
+        genres: ['Action']
+      }
+    ]);
+
+    assert.strictEqual(enriched[0].poster, 'https://images.example/tt-art/poster.jpg');
+    assert.strictEqual(enriched[0].background, 'https://images.example/tt-art/background.jpg');
+    assert.strictEqual(enriched[0].imdbRating, 8.5);
+    assert.deepStrictEqual(enriched[0].genres, ['Action']);
+
+    await sandbox.enrichBrowseItemsWithArtwork('movie', [{ id: 'tt-art', name: 'Cached' }]);
+    assert.strictEqual(calls, 1);
+  } finally {
+    sandbox.fetchMetaFromAddons = previousFetchMeta;
+    sandbox.browseArtworkMetaCache = {};
+    sandbox.browseArtworkMetaPending = {};
+  }
+}
+
+async function testRatingBrowseStopsOnRateLimit() {
+  const previousRequest = sandbox.requestImdbCatalogApiPayload;
+  const previousEnrich = sandbox.enrichBrowseItemsWithArtwork;
+  let calls = 0;
+
+  sandbox.requestImdbCatalogApiPayload = (type, combined, skip, limit) => {
+    calls += 1;
+    assert.strictEqual(type, 'movie');
+    assert.strictEqual(skip, 0);
+    assert.ok(limit >= 5);
+    return Promise.resolve({
+      metas: Array.from({ length: 5 }, (_, index) => ({
+        id: `tt-rate-${index}`,
+        name: `Rate Limited ${index}`,
+        imdbRating: 8.2,
+        genres: ['Action']
+      })),
+      limit: 5,
+      nextSkip: 5,
+      hasMore: true,
+      rateLimited: true
+    });
+  };
+  sandbox.enrichBrowseItemsWithArtwork = (type, items) => Promise.resolve(items);
+
+  try {
+    const result = await sandbox.fetchRatingCombinedBrowse('movie', {
+      ratingOption: {
+        key: 'rating-8',
+        label: '8',
+        minRating: 8,
+        maxRating: 9
+      },
+      genreLabel: 'Action'
+    }, [], false);
+
+    assert.strictEqual(calls, 1);
+    assert.strictEqual(result.canLoadMore, true);
+    assert.strictEqual(result.nextSkip, 5);
+    assert.strictEqual(result.items.length, 5);
+  } finally {
+    sandbox.requestImdbCatalogApiPayload = previousRequest;
+    sandbox.enrichBrowseItemsWithArtwork = previousEnrich;
+  }
 }
 
 function testDtsVirtualAudioDetection() {
@@ -429,17 +590,29 @@ function testResumeAndTranscodedTimelineHelpers() {
   sandbox.state.durationMs = 0;
 }
 
-[
-  testSubtitleParsing,
-  testContinueDedupe,
-  testCatalogSelectionAndUrls,
-  testBrowsePaging,
-  testBrowseGenreFiltering,
-  testYearFilterDefaultAll,
-  testImdbRatingFilter,
-  testMetadataFormatting,
-  testDtsVirtualAudioDetection,
-  testResumeAndTranscodedTimelineHelpers
-].forEach((testFn) => testFn());
+(async () => {
+  const tests = [
+    testSubtitleParsing,
+    testContinueDedupe,
+    testCatalogSelectionAndUrls,
+    testBrowsePaging,
+    testBrowseGenreFiltering,
+    testYearFilterDefaultAll,
+    testImdbRatingFilter,
+    testMetadataFormatting,
+    testImdbApiDetailHelpers,
+    testBrowseArtworkEnrichment,
+    testRatingBrowseStopsOnRateLimit,
+    testDtsVirtualAudioDetection,
+    testResumeAndTranscodedTimelineHelpers
+  ];
 
-console.log('pure tests passed');
+  for (const testFn of tests) {
+    await testFn();
+  }
+
+  console.log('pure tests passed');
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});

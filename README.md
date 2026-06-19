@@ -60,6 +60,8 @@ node tests/browser-smoke.js
 Set local Tizen CLI variables. Replace the placeholders with values from your own Tizen Studio setup:
 
 ```sh
+set -euo pipefail
+
 cd /path/to/StremioTest
 
 TIZEN="${TIZEN_STUDIO_HOME:-$HOME/tizen-studio}/tools/ide/bin/tizen"
@@ -67,6 +69,20 @@ SDB="${TIZEN_STUDIO_HOME:-$HOME/tizen-studio}/tools/sdb"
 TARGET="<target-name-from-sdb-devices>"
 PROFILE="<security-profile-name>"
 APP_ID="VtffsKLoty.NuvioTizen"
+EXCLUDES=(
+    ".git/*" ".git"
+    ".cache/*" ".cache"
+    ".metadata/*" ".metadata"
+    ".vscode/*" ".vscode"
+    ".gitignore"
+    "tests/*" "tests"
+    "scripts/*" "scripts"
+    "README.md" "install_commands.txt"
+)
+EXCLUDE_ARGS=()
+for pattern in "${EXCLUDES[@]}"; do
+    EXCLUDE_ARGS+=("-e" "$pattern")
+done
 ```
 
 Find connected targets and available signing profiles:
@@ -79,10 +95,19 @@ Find connected targets and available signing profiles:
 Build, package, install, and launch the app:
 
 ```sh
-"$TIZEN" build-web -- "$(pwd)"
+rm -rf .buildResult
+
+"$TIZEN" build-web "${EXCLUDE_ARGS[@]}" -- "$(pwd)"
 "$TIZEN" package -t wgt -s "$PROFILE" -- ./.buildResult
 
 WGT="$(ls -t .buildResult/*.wgt | head -1)"
+
+unzip -p "$WGT" index.html | grep -q "detailCastSection"
+if unzip -l "$WGT" | grep -E '(^|[[:space:]])(\.git|\.cache)(/|$)'; then
+    echo "Refusing to install: WGT still contains .git or .cache files." >&2
+    exit 1
+fi
+
 "$TIZEN" install -n "$(basename "$WGT")" -t "$TARGET" -- "$(dirname "$WGT")"
 "$TIZEN" run -p "$APP_ID" -t "$TARGET"
 ```
@@ -123,6 +148,46 @@ var AUDIO_TRANSCODER_BASE_URL = 'http://<helper-host-ip>:8787';
 ```
 
 Then rebuild, install, and launch the app. When a detected DTS/DTS-HD audio chip is selected, the app asks the helper for a stream where that DTS track is converted to AC3 and opens that returned stream in AVPlay.
+
+## IMDb Catalog Helper
+
+IMDb rating filters use a local helper instead of Cinemeta's sparse `imdbRating` catalog. The helper downloads IMDb's non-commercial datasets for fast candidate ordering, verifies displayed result details through `https://api.imdbapi.dev`, and exposes rating/year/genre catalog endpoints to the TV app.
+
+Requirements:
+
+- The TV can reach the helper machine over the local network
+- Enough disk space for IMDb dataset downloads and the generated cache
+- IMDb dataset use must comply with IMDb's non-commercial dataset terms
+
+Start the helper:
+
+```sh
+node scripts/imdb-catalog-api.js
+```
+
+Point the TV app at the helper by setting [`IMDB_CATALOG_API_BASE_URL`](js/config-state.js) before packaging:
+
+```js
+var IMDB_CATALOG_API_BASE_URL = 'http://<helper-host-ip>:8791';
+```
+
+The first start can take a while because it downloads and indexes `title.basics.tsv.gz` and `title.ratings.tsv.gz`. IMDb API title details are cached as rating-filter pages are requested, and Load More continues paging through the helper.
+
+The helper defaults are tuned to avoid inflated low-vote ratings:
+
+```sh
+IMDB_MIN_VOTES=10000 IMDB_WEIGHTED_VOTE_ANCHOR=25000 node scripts/imdb-catalog-api.js
+```
+
+- `IMDB_MIN_VOTES` removes titles with too few votes from rating-filter results.
+- `IMDB_WEIGHTED_VOTE_ANCHOR` controls how strongly low-vote ratings are pulled toward the global mean before sorting.
+- `IMDB_WEIGHTED_MEAN_RATING` defaults to `6.8`.
+- `IMDB_API_BASE_URL` defaults to `https://api.imdbapi.dev`.
+- `IMDB_API_EXCLUDED_COUNTRY_CODES` defaults to `IN` for the IMDb-rating catalog helper.
+- `IMDB_API_BATCH_CONCURRENCY` defaults to `1` to avoid public API rate limits.
+- `IMDB_ENRICH_ARTWORK=1` fetches Cinemeta metadata for exact artwork, but it makes uncached catalog queries slower. Leave it off for faster browsing.
+
+Changing these settings automatically rebuilds the generated IMDb index.
 
 ## Runtime Notes
 

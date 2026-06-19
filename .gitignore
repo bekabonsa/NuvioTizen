@@ -1,5 +1,7 @@
 .buildResult/
 .sign/
+.cache/
 *.wgt
 .DS_Store
 *.txt
+!install_commands.txt

@@ -284,6 +284,7 @@ function createCard(item, kind) {
     var mediaStack;
     var progressRail;
     var imageUrl = options.imageUrl || item.poster;
+    var fallbackImageUrl = options.fallbackImageUrl || (imageUrl !== item.background ? item.background : '');
 
     card.className = 'card';
     if (options.className) {
@@ -293,18 +294,34 @@ function createCard(item, kind) {
     card.setAttribute('tabindex', '-1');
 
     poster.className = 'poster';
+    function showEmptyPoster() {
+        poster.innerHTML = '';
+        poster.classList.add('is-empty');
+        poster.textContent = 'No poster';
+    }
+
     if (imageUrl) {
         var img = document.createElement('img');
+        var triedFallback = false;
+
         img.decoding = 'async';
         if (options.eagerImage) {
             img.loading = 'eager';
         }
+        img.addEventListener('error', function() {
+            if (!triedFallback && fallbackImageUrl && fallbackImageUrl !== imageUrl) {
+                triedFallback = true;
+                img.src = fallbackImageUrl;
+                return;
+            }
+
+            showEmptyPoster();
+        });
         img.src = imageUrl;
         img.alt = item.name || 'Poster';
         poster.appendChild(img);
     } else {
-        poster.classList.add('is-empty');
-        poster.textContent = 'No poster';
+        showEmptyPoster();
     }
 
     title.className = 'card-title';

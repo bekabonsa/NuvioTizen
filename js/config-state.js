@@ -6,6 +6,8 @@ var SUPABASE_URL = 'https://dpyhjjcoabcglfmgecug.supabase.co';
 var SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRweWhqamNvYWJjZ2xmbWdlY3VnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA3ODYyNDcsImV4cCI6MjA4NjM2MjI0N30.U-3QSNDdpsnvRk_7ZL419AFTOtggHJJcmkodxeXjbkg';
 var TV_LOGIN_REDIRECT_BASE_URL = 'https://nuvioapp.space/tv-login';
 var AUDIO_TRANSCODER_BASE_URL = 'http://10.0.0.10:8787';
+var IMDB_CATALOG_API_BASE_URL = 'http://10.0.0.10:8791';
+var IMDB_API_BASE_URL = 'https://api.imdbapi.dev';
 var STORAGE_AUTH = 'nuvio.accessToken';
 var STORAGE_REFRESH = 'nuvio.refreshToken';
 var STORAGE_USER = 'nuvio.user';
@@ -50,6 +52,7 @@ var BROWSE_LOAD_MORE_SIZE = BROWSE_PAGE_SIZE * 2;
 var CINEMETA_CATALOG_PAGE_SIZE = 50;
 var BROWSE_EXPANSION_BATCH_SIZE = 4;
 var RATING_BROWSE_SCAN_PAGE_LIMIT = 20;
+var DETAIL_CAST_LIMIT = 10;
 var FORCE_AVPLAY_DEBUG = false;
 var PLAYER_SCRUB_INITIAL_NUDGE_MS = 5000;
 var PLAYER_SCRUB_TICK_MS = 50;
@@ -57,9 +60,15 @@ var artworkPreloadCache = {};
 var artworkPreloadOrder = [];
 var browseCatalogPayloadCache = {};
 var browseCatalogPayloadPending = {};
+var browseArtworkMetaCache = {};
+var browseArtworkMetaPending = {};
 var browsePrefetchTimers = {};
 var homeActiveMetaCache = {};
 var homeActiveMetaPending = {};
+var imdbApiTitleCache = {};
+var imdbApiCreditsCache = {};
+var imdbApiTitlePending = {};
+var imdbApiCreditsPending = {};
 var REQUEST_CONCURRENCY_LIMITS = {
     catalog: 2,
     meta: 2,
@@ -236,6 +245,9 @@ var state = {
     searchRequestId: 0,
     selectedItem: null,
     selectedType: null,
+    selectedImdbApiTitle: null,
+    selectedCast: [],
+    selectedDetailRequestKey: '',
     allSeriesVideos: [],
     availableSeasons: [],
     selectedSeason: null,

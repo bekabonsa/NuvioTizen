@@ -1,0 +1,42 @@
+
+set -euo pipefail
+
+USER="bekabonsa"
+
+cd /Users/"$USER"/workspace/StremioTest
+
+TIZEN="/Users/"$USER"/tizen-studio/tools/ide/bin/tizen"
+SDB="/Users/"$USER"/tizen-studio/tools/sdb"
+TARGET="UE55NU7475"
+PROFILE="bex"
+APP_ID="VtffsKLoty.NuvioTizen"
+EXCLUDES=(
+    ".git/*" ".git"
+    ".cache/*" ".cache"
+    ".metadata/*" ".metadata"
+    ".vscode/*" ".vscode"
+    ".gitignore"
+    "tests/*" "tests"
+    "scripts/*" "scripts"
+    "README.md" "install_commands.txt"
+)
+EXCLUDE_ARGS=()
+for pattern in "${EXCLUDES[@]}"; do
+    EXCLUDE_ARGS+=("-e" "$pattern")
+done
+
+rm -rf .buildResult
+
+"$TIZEN" build-web "${EXCLUDE_ARGS[@]}" -- "$(pwd)"
+"$TIZEN" package -t wgt -s "$PROFILE" -- ./.buildResult
+
+WGT="$(ls -t .buildResult/*.wgt | head -1)"
+
+unzip -p "$WGT" index.html | grep -q "detailCastSection"
+if unzip -l "$WGT" | grep -E '(^|[[:space:]])(\.git|\.cache)(/|$)'; then
+    echo "Refusing to install: WGT still contains .git or .cache files." >&2
+    exit 1
+fi
+
+"$TIZEN" install -n "$(basename "$WGT")" -t "$TARGET" -- "$(dirname "$WGT")"
+"$TIZEN" run -p "$APP_ID" -t "$TARGET"
