@@ -1262,9 +1262,10 @@ function fetchBrowseCatalog(type, append) {
         : append && isCinemetaSeriesTopCatalog(option) && !useLocalPaging
         ? CINEMETA_CATALOG_PAGE_SIZE
         : (append ? BROWSE_LOAD_MORE_SIZE : BROWSE_PAGE_SIZE);
+    var requestId;
 
     function finishAppendLoading() {
-        if (append) {
+        if (append && isBrowseRequestCurrent(type, requestId)) {
             setBrowseLoadingMore(type, false);
             updateBrowseLoadMoreButton(type);
         }
@@ -1273,6 +1274,7 @@ function fetchBrowseCatalog(type, append) {
     if (append && getBrowseLoadingMore(type)) {
         return Promise.resolve();
     }
+    requestId = bumpBrowseRequestId(type);
     if (append) {
         setBrowseLoadingMore(type, true);
         updateBrowseLoadMoreButton(type);
@@ -1290,6 +1292,9 @@ function fetchBrowseCatalog(type, append) {
     if (ratingCombined) {
         updateConnectionStatus('Loading ' + type + ' browse...', false, false);
         return fetchRatingCombinedBrowse(type, ratingCombined, currentItems, append).then(function(result) {
+            if (!isBrowseRequestCurrent(type, requestId)) {
+                return;
+            }
             setBrowseItems(type, result.items);
             setBrowseSkip(type, result.nextSkip);
             setBrowseCanLoadMore(type, result.canLoadMore);
@@ -1305,6 +1310,9 @@ function fetchBrowseCatalog(type, append) {
             finishAppendLoading();
             scheduleBrowsePrefetch(type);
         }).catch(function(error) {
+            if (!isBrowseRequestCurrent(type, requestId)) {
+                return;
+            }
             finishAppendLoading();
             updateConnectionStatus('Catalog error: ' + error.message, false, true);
         });
@@ -1313,6 +1321,9 @@ function fetchBrowseCatalog(type, append) {
     if (yearCombined) {
         updateConnectionStatus('Loading ' + type + ' browse...', false, false);
         return fetchYearCombinedBrowse(type, yearCombined.baseOption, yearCombined.yearOption, currentItems, append).then(function(result) {
+            if (!isBrowseRequestCurrent(type, requestId)) {
+                return;
+            }
             setBrowseItems(type, result.items);
             setBrowseSkip(type, result.items.length);
             setBrowseCanLoadMore(type, result.canLoadMore);
@@ -1328,6 +1339,9 @@ function fetchBrowseCatalog(type, append) {
             finishAppendLoading();
             scheduleBrowsePrefetch(type);
         }).catch(function(error) {
+            if (!isBrowseRequestCurrent(type, requestId)) {
+                return;
+            }
             finishAppendLoading();
             updateConnectionStatus('Catalog error: ' + error.message, false, true);
         });
@@ -1336,6 +1350,9 @@ function fetchBrowseCatalog(type, append) {
     if (append && usesCinemetaBrowseExpansion(option)) {
         updateConnectionStatus('Loading ' + type + ' browse...', false, false);
         return fetchCinemetaBrowseAppend(type, option, currentItems).then(function(result) {
+            if (!isBrowseRequestCurrent(type, requestId)) {
+                return;
+            }
             setBrowseItems(type, result.items);
             setBrowseSkip(type, result.items.length);
             setBrowseCanLoadMore(type, result.canLoadMore);
@@ -1354,6 +1371,9 @@ function fetchBrowseCatalog(type, append) {
             finishAppendLoading();
             scheduleBrowsePrefetch(type);
         }).catch(function(error) {
+            if (!isBrowseRequestCurrent(type, requestId)) {
+                return;
+            }
             finishAppendLoading();
             updateConnectionStatus('Catalog error: ' + error.message, false, true);
         });
@@ -1370,6 +1390,9 @@ function fetchBrowseCatalog(type, append) {
     updateConnectionStatus('Loading ' + type + ' browse...', false, false);
 
     return requestBrowseCatalogPayload(option, requestSkip).then(function(payload) {
+        if (!isBrowseRequestCurrent(type, requestId)) {
+            return;
+        }
         var rawItems = useLocalPaging
             ? uniqueCatalogItems(payload && Array.isArray(payload.metas) ? payload.metas : [])
             : uniqueCatalogItems(normalizeCatalogPayloadWithLimit(payload, requestLimit));
@@ -1403,6 +1426,9 @@ function fetchBrowseCatalog(type, append) {
         finishAppendLoading();
         scheduleBrowsePrefetch(type);
     }).catch(function(error) {
+        if (!isBrowseRequestCurrent(type, requestId)) {
+            return;
+        }
         finishAppendLoading();
         updateConnectionStatus('Catalog error: ' + error.message, false, true);
     });

@@ -274,18 +274,20 @@ function fetchStreamsFromAddon(addon, type, videoId) {
             return streams.map(function(stream) {
                 var title = stream.name || stream.title || stream.description || 'Unnamed stream';
                 var description = stream.description || stream.title || '';
+                var bridgeable = isTorrentBridgeCandidate(stream);
                 var playable = !!stream.url;
-                var status = playable ? 'Playable' : 'Needs proxy';
+                var status = playable ? 'Playable' : (bridgeable ? 'Use bridge' : 'Needs proxy');
 
                 if (stream.behaviorHints && stream.behaviorHints.notWebReady) {
                     playable = false;
-                    status = 'Not web ready';
+                    status = bridgeable ? 'Use bridge' : 'Not web ready';
                 }
 
                 return {
                     addonName: addonName,
                     addonBaseUrl: baseUrl,
                     playable: playable,
+                    bridgeable: bridgeable,
                     status: status,
                     title: title,
                     description: description,
@@ -302,6 +304,221 @@ function fetchStreamsFromAddon(addon, type, videoId) {
                 raw: null
             }];
         });
+}
+
+function getTorrentBridgeBaseUrl() {
+    return String(typeof TORRENT_BRIDGE_BASE_URL === 'undefined' ? '' : TORRENT_BRIDGE_BASE_URL)
+        .replace(/\/+$/, '')
+        .trim();
+}
+
+function getTorrentBridgeToken() {
+    return String(typeof TORRENT_BRIDGE_TOKEN === 'undefined' ? '' : TORRENT_BRIDGE_TOKEN).trim();
+}
+
+function getStreamInfoHash(stream) {
+    var raw = stream && stream.raw ? stream.raw : stream;
+    var hints = raw && raw.behaviorHints ? raw.behaviorHints : {};
+    var value = raw && (raw.infoHash || raw.info_hash || raw.btih)
+        || hints && (hints.infoHash || hints.info_hash || hints.btih)
+        || '';
+
+    return String(value || '').trim();
+}
+
+function isTorrentBridgeCandidate(stream) {
+    return !!(getTorrentBridgeBaseUrl() && getTorrentBridgeToken() && getStreamInfoHash(stream));
+}
+
+function getTorrentBridgeJobKey(streamEntry) {
+    var hash = getStreamInfoHash(streamEntry);
+    var fileIdx = streamEntry && streamEntry.raw && typeof streamEntry.raw.fileIdx !== 'undefined'
+        ? String(streamEntry.raw.fileIdx)
+        : '';
+
+    return hash ? hash + ':' + fileIdx : '';
+}
+
+function requestTorrentBridge(path, method, body) {
+    return requestJsonWithHeaders(
+        getTorrentBridgeBaseUrl() + path,
+        method || 'GET',
+        body,
+        {
+            Authorization: 'Bearer ' + getTorrentBridgeToken()
+        }
+    );
+}
+
+function getTorrentBridgePayload(streamEntry) {
+    var raw = streamEntry && streamEntry.raw ? streamEntry.raw : {};
+    var payload = {
+        infoHash: getStreamInfoHash(streamEntry)
+    };
+
+    if (raw.magnet) {
+        payload.magnet = raw.magnet;
+    }
+    if (typeof raw.fileIdx !== 'undefined') {
+        payload.fileIndex = raw.fileIdx;
+    }
+    if (raw.title || raw.name) {
+        payload.title = raw.title || raw.name;
+    }
+
+    return payload;
+}
+
+function formatTorrentBridgeProgress(job) {
+    var progress = job && typeof job.progress === 'number'
+        ? Math.max(0, Math.min(100, Math.round(job.progress * 100)))
+        : 0;
+    var stateLabel = job && job.state ? String(job.state) : 'starting';
+
+    return 'Bridge caching ' + progress + '% (' + stateLabel + ')';
+}
+
+function updateTorrentBridgeEntry(streamEntry, job) {
+    streamEntry.bridgeJob = job;
+    if (job && job.ready && job.streamUrl) {
+        streamEntry.playable = true;
+        streamEntry.bridgeable = false;
+        streamEntry.status = 'Playable';
+        streamEntry.raw = cloneStreamRaw(streamEntry.raw) || streamEntry.raw || {};
+        streamEntry.raw.url = job.streamUrl;
+        streamEntry.description = streamEntry.description || 'Torrent bridge stream is ready.';
+        return;
+    }
+
+    streamEntry.playable = false;
+    streamEntry.bridgeable = true;
+    streamEntry.status = formatTorrentBridgeProgress(job);
+}
+
+function setTorrentBridgePlayerStatus(streamEntry, message) {
+    state.currentStream = {
+        addonName: streamEntry.addonName || '',
+        playable: false,
+        placeholder: true,
+        status: message,
+        title: streamEntry.title || 'Preparing stream',
+        description: streamEntry.description || 'Waiting for the torrent bridge to buffer enough data.'
+    };
+    renderPlayerState();
+    setPlayerStatus(message);
+    showPlayerChrome(true);
+}
+
+function shouldShowTorrentBridgeInPlayer(streamKey) {
+    var jobState = state.torrentBridgeJobs[streamKey];
+    return !!(jobState && jobState.playerMode);
+}
+
+function renderTorrentBridgeState(streamEntry, streamKey) {
+    var message = streamEntry.status || 'Bridge caching...';
+
+    if (shouldShowTorrentBridgeInPlayer(streamKey)) {
+        if (state.resumeAutoplayInPlayer) {
+            setResumeLookupPlayerStatus(message);
+        } else {
+            setTorrentBridgePlayerStatus(streamEntry, message);
+        }
+        return;
+    }
+
+    if (state.currentView !== 'addons') {
+        setView('addons', {
+            focusRegion: 'main',
+            resetMain: false,
+            pushHistory: false
+        });
+    }
+    state.detailMode = 'sources';
+    setAddonsMessage(message, null);
+    renderStreamList();
+}
+
+function pollTorrentBridge(streamEntry, streamKey) {
+    var hash = getStreamInfoHash(streamEntry);
+    var fileIdx = streamEntry && streamEntry.raw && typeof streamEntry.raw.fileIdx !== 'undefined'
+        ? streamEntry.raw.fileIdx
+        : null;
+    var path = '/api/torrents/' + encodeURIComponent(hash);
+
+    if (fileIdx !== null) {
+        path += '?fileIndex=' + encodeURIComponent(String(fileIdx));
+    }
+
+    return requestTorrentBridge(path, 'GET').then(function(job) {
+        if (!state.torrentBridgeJobs[streamKey]) {
+            return;
+        }
+
+        updateTorrentBridgeEntry(streamEntry, job);
+        renderTorrentBridgeState(streamEntry, streamKey);
+        if (job && job.ready && job.streamUrl) {
+            openStream(streamEntry);
+            delete state.torrentBridgeJobs[streamKey];
+            return;
+        }
+
+        state.torrentBridgeJobs[streamKey].timer = setTimeout(function() {
+            pollTorrentBridge(streamEntry, streamKey);
+        }, 3000);
+    }).catch(function(error) {
+        streamEntry.status = 'Bridge error';
+        streamEntry.description = error.message;
+        renderTorrentBridgeState(streamEntry, streamKey);
+        delete state.torrentBridgeJobs[streamKey];
+    });
+}
+
+function openTorrentBridgeStream(streamEntry) {
+    var streamKey = getTorrentBridgeJobKey(streamEntry);
+
+    if (!streamEntry || !isTorrentBridgeCandidate(streamEntry) || !streamKey) {
+        openStream(streamEntry);
+        return;
+    }
+
+    if (state.torrentBridgeJobs[streamKey]) {
+        return;
+    }
+
+    state.torrentBridgeJobs[streamKey] = {
+        startedAt: Date.now(),
+        timer: null,
+        playerMode: state.currentView === 'player' || state.resumeAutoplayInPlayer
+    };
+    streamEntry.status = 'Bridge starting...';
+    renderTorrentBridgeState(streamEntry, streamKey);
+
+    requestTorrentBridge('/api/torrents', 'POST', getTorrentBridgePayload(streamEntry)).then(function(job) {
+        updateTorrentBridgeEntry(streamEntry, job);
+        renderTorrentBridgeState(streamEntry, streamKey);
+        if (job && job.ready && job.streamUrl) {
+            openStream(streamEntry);
+            delete state.torrentBridgeJobs[streamKey];
+            return;
+        }
+        state.torrentBridgeJobs[streamKey].timer = setTimeout(function() {
+            pollTorrentBridge(streamEntry, streamKey);
+        }, 3000);
+    }).catch(function(error) {
+        streamEntry.status = 'Bridge error';
+        streamEntry.description = error.message;
+        renderTorrentBridgeState(streamEntry, streamKey);
+        delete state.torrentBridgeJobs[streamKey];
+    });
+}
+
+function openPlayableOrBridgeStream(streamEntry) {
+    if (streamEntry && streamEntry.bridgeable) {
+        openTorrentBridgeStream(streamEntry);
+        return;
+    }
+
+    openStream(streamEntry);
 }
 
 function getSeasonEpisodeCount(season) {
@@ -704,7 +921,7 @@ function renderStreamList() {
         button.type = 'button';
         button.setAttribute('tabindex', '-1');
         button.addEventListener('click', function() {
-            openStream(streamEntry);
+            openPlayableOrBridgeStream(streamEntry);
         });
 
         main.className = 'stream-card-main';
@@ -719,7 +936,7 @@ function renderStreamList() {
         note.textContent = streamEntry.description || 'No extra stream description.';
         badge.textContent = streamEntry.status;
 
-        if (!streamEntry.playable) {
+        if (!streamEntry.playable && !streamEntry.bridgeable) {
             badge.classList.add('is-error');
         }
 
@@ -1054,7 +1271,8 @@ function renderDetailCast() {
         if (member.image) {
             image = document.createElement('img');
             image.decoding = 'async';
-            image.loading = 'lazy';
+            image.loading = 'eager';
+            image.setAttribute('fetchpriority', 'high');
             image.alt = member.name;
             image.src = member.image;
             image.onerror = function() {
@@ -1084,23 +1302,39 @@ function renderDetailCast() {
 function loadImdbApiSelectionDetails(type, id) {
     var requestKey = getImdbApiDetailKey(type, id);
 
-    return Promise.all([
-        requestImdbApiTitle(id).catch(function() { return null; }),
-        requestImdbApiCredits(id).catch(function() { return null; })
-    ]).then(function(results) {
-        var title = results[0];
-        var credits = results[1];
-
+    requestImdbApiTitle(id).then(function(title) {
         if (state.selectedDetailRequestKey !== requestKey) {
             return;
         }
 
         state.selectedImdbApiTitle = title || null;
-        state.selectedCast = normalizeImdbApiCast(credits);
         if (!state.selectedCast.length) {
             state.selectedCast = normalizeImdbApiTitleStars(title);
         }
         applySelectedImdbApiTitleToSelection();
+        renderAddons();
+    }).catch(function() {});
+
+    return requestImdbApiCredits(id).then(function(credits) {
+        var cast;
+
+        if (state.selectedDetailRequestKey !== requestKey) {
+            return;
+        }
+
+        cast = normalizeImdbApiCast(credits);
+        if (cast.length) {
+            state.selectedCast = cast;
+        } else if (!state.selectedCast.length) {
+            state.selectedCast = normalizeImdbApiTitleStars(state.selectedImdbApiTitle);
+        }
+        renderAddons();
+    }).catch(function() {
+        if (state.selectedDetailRequestKey !== requestKey || state.selectedCast.length) {
+            return;
+        }
+
+        state.selectedCast = normalizeImdbApiTitleStars(state.selectedImdbApiTitle);
         renderAddons();
     });
 }
@@ -1185,6 +1419,16 @@ function renderPlayerState() {
         stream.description || 'This stream came from the selected addon source.';
     syncExternalSubtitleTracks();
 
+    if (stream.placeholder) {
+        empty.classList.remove('is-hidden');
+        empty.textContent = stream.status || 'Finding stream...';
+        clearPlaybackSurface();
+        setPlayerStatus(stream.status || 'Finding stream...');
+        renderTrackSelectors();
+        setPlayerNextEpisodeUi();
+        return;
+    }
+
     if (!stream.playable || !stream.raw || !stream.raw.url) {
         empty.classList.remove('is-hidden');
         empty.textContent = 'This stream is not directly playable in the web shell. It likely needs a proxy or native playback pipeline.';
@@ -1199,6 +1443,48 @@ function renderPlayerState() {
     video.classList.remove('is-hidden');
     renderTrackSelectors();
     setPlayerNextEpisodeUi();
+}
+
+function setResumeLookupPlayerStatus(message) {
+    var title;
+    var description;
+
+    if (!state.resumeAutoplayInPlayer) {
+        return;
+    }
+
+    title = state.selectedItem && state.selectedItem.name ? state.selectedItem.name : 'Resume watching';
+    description = state.selectedVideo && state.selectedVideo.title
+        ? state.selectedVideo.title
+        : 'Preparing your saved playback.';
+
+    state.currentStream = {
+        addonName: '',
+        playable: false,
+        placeholder: true,
+        status: message || 'Finding stream...',
+        title: title,
+        description: description
+    };
+    renderPlayerState();
+    setView('player', {
+        focusRegion: 'main',
+        resetMain: true
+    });
+    showPlayerChrome(true);
+}
+
+function failResumeLookupInPlayer(message) {
+    if (!state.resumeAutoplayInPlayer) {
+        return false;
+    }
+
+    state.autoplayPending = false;
+    state.pendingResumePositionMs = 0;
+    state.pendingResumeStream = null;
+    setResumeLookupPlayerStatus(message || 'Could not resume this stream.');
+    state.resumeAutoplayInPlayer = false;
+    return true;
 }
 
 function startHtml5Stream(url) {
@@ -1395,6 +1681,7 @@ function loadCurrentStream() {
 function openStream(streamEntry) {
     resetTrackState();
     clearPlayerDiagnostics();
+    state.resumeAutoplayInPlayer = false;
     state.currentStream = streamEntry;
     state.lastProgressSavedAt = 0;
     state.lastProgressSavedPositionMs = 0;
@@ -1541,12 +1828,85 @@ function resumeContinueEntry(entry) {
     if (!normalized) {
         return;
     }
+    if (resumeContinueEntryDirectly(normalized)) {
+        return;
+    }
 
     prepareSelection(normalized.item, normalized.kind, {
         autoplayFirst: true,
         resumeEntry: normalized,
-        resumePositionMs: getResumePositionMsFromEntry(normalized)
+        resumePositionMs: getResumePositionMsFromEntry(normalized),
+        resumeInPlayer: true
     });
+}
+
+function getDirectResumeVideo(entry) {
+    if (!entry || !entry.item) {
+        return null;
+    }
+
+    if (entry.video && entry.video.id) {
+        return {
+            id: entry.video.id,
+            title: entry.video.title || entry.item.name || '',
+            season: getVideoSeason(entry.video),
+            episode: getVideoEpisode(entry.video)
+        };
+    }
+
+    if (normalizeAddonType(entry.kind) === 'movie') {
+        return {
+            id: entry.item.id,
+            title: entry.item.name || ''
+        };
+    }
+
+    return null;
+}
+
+function applySavedResumeVideoFallback(entry) {
+    var video = getDirectResumeVideo(entry);
+
+    if (!video || normalizeAddonType(entry && entry.kind) !== 'series') {
+        return false;
+    }
+
+    state.allSeriesVideos = [video];
+    state.availableSeasons = [getVideoSeason(video)];
+    state.selectedSeason = getVideoSeason(video);
+    state.selectedEpisodes = [video];
+    state.selectedVideo = video;
+    return true;
+}
+
+function resumeContinueEntryDirectly(entry) {
+    var stream = entry && entry.stream;
+    var kind = normalizeAddonType(entry && entry.kind);
+    var video = getDirectResumeVideo(entry);
+
+    if (!entry || !entry.item || !kind || !video || !stream || stream.playable === false || !stream.raw || !stream.raw.url) {
+        return false;
+    }
+
+    captureBrowseReturnState();
+    state.selectedItem = entry.item;
+    state.selectedType = kind;
+    state.selectedImdbApiTitle = null;
+    state.selectedCast = [];
+    state.selectedDetailRequestKey = getImdbApiDetailKey(kind, entry.item.id);
+    state.detailMode = 'details';
+    state.allSeriesVideos = kind === 'series' ? [video] : [];
+    state.availableSeasons = kind === 'series' ? [getVideoSeason(video)] : [];
+    state.selectedSeason = kind === 'series' ? getVideoSeason(video) : null;
+    state.selectedEpisodes = kind === 'series' ? [video] : [];
+    state.selectedVideo = video;
+    state.streams = [stream];
+    state.autoplayPending = false;
+    state.pendingResumePositionMs = getResumePositionMsFromEntry(entry);
+    state.pendingResumeStream = null;
+
+    openStream(stream);
+    return true;
 }
 
 function prepareSelection(item, type, options) {
@@ -1554,6 +1914,7 @@ function prepareSelection(item, type, options) {
     var resumePositionMs = options && typeof options.resumePositionMs === 'number'
         ? Math.max(0, options.resumePositionMs)
         : getResumePositionMsFromEntry(resumeEntry);
+    var resumeInPlayer = !!(options && options.resumeInPlayer);
 
     captureBrowseReturnState();
     state.selectedItem = item;
@@ -1571,20 +1932,26 @@ function prepareSelection(item, type, options) {
     state.autoplayPending = !!(options && options.autoplayFirst);
     state.pendingResumePositionMs = state.autoplayPending ? resumePositionMs : 0;
     state.pendingResumeStream = state.autoplayPending && resumeEntry && resumeEntry.stream ? resumeEntry.stream : null;
+    state.resumeAutoplayInPlayer = state.autoplayPending && resumeInPlayer;
     renderAddons();
     loadImdbApiSelectionDetails(type, item && item.id);
 
-    setView('addons', {
-        focusRegion: 'main',
-        resetMain: true
-    });
-    setAddonsMessage('Loading selection details...', null);
+    if (state.resumeAutoplayInPlayer) {
+        setResumeLookupPlayerStatus('Finding saved stream...');
+    } else {
+        setView('addons', {
+            focusRegion: 'main',
+            resetMain: true
+        });
+        setAddonsMessage('Loading selection details...', null);
+    }
 
     if (type === 'series') {
         fetchMetaFromAddons('series', item.id)
             .then(function(payload) {
                 var meta = payload && payload.meta ? payload.meta : payload;
                 var seasons;
+                var matchedResumeVideo;
                 state.selectedItem = meta || item;
                 applySelectedItemFallbacks(item);
                 applySelectedImdbApiTitleToSelection();
@@ -1594,23 +1961,39 @@ function prepareSelection(item, type, options) {
                 });
                 state.availableSeasons = seasons;
                 state.selectedSeason = seasons.length ? seasons[0] : null;
-                applyResumeVideoSelection(resumeEntry);
+                matchedResumeVideo = applyResumeVideoSelection(resumeEntry);
+                if (state.autoplayPending && resumeEntry && resumeEntry.video && !matchedResumeVideo && applySavedResumeVideoFallback(resumeEntry)) {
+                    renderAddons();
+                    loadStreamsForSelection();
+                    return;
+                }
                 updateSelectedEpisodesForSeason();
                 renderAddons();
                 if (!state.selectedVideo) {
                     state.pendingResumePositionMs = 0;
                     state.pendingResumeStream = null;
-                    setAddonsMessage('No episode metadata was returned for this series.', 'error');
+                    if (!failResumeLookupInPlayer('No episode metadata was returned for this series.')) {
+                        setAddonsMessage('No episode metadata was returned for this series.', 'error');
+                    }
                     return;
                 }
                 if (state.autoplayPending) {
+                    setResumeLookupPlayerStatus('Loading episode streams...');
                     loadStreamsForSelection();
                     return;
                 }
                 setAddonsMessage('Choose More Episodes to pick an episode, or Play to start the first episode.', null);
             }).catch(function(error) {
+                if (state.autoplayPending && applySavedResumeVideoFallback(resumeEntry)) {
+                    renderAddons();
+                    setResumeLookupPlayerStatus('Loading episode streams...');
+                    loadStreamsForSelection();
+                    return;
+                }
                 renderAddons();
-                setAddonsMessage('Series metadata failed: ' + error.message, 'error');
+                if (!failResumeLookupInPlayer('Series metadata failed: ' + error.message)) {
+                    setAddonsMessage('Series metadata failed: ' + error.message, 'error');
+                }
             });
         return;
     }
@@ -1633,10 +2016,14 @@ function prepareSelection(item, type, options) {
                 title: state.selectedItem.name || item.name
             };
             renderAddons();
+            setResumeLookupPlayerStatus('Loading movie streams...');
             loadStreamsForSelection();
         }).catch(function(error) {
             renderAddons();
-            setAddonsMessage('Movie metadata failed: ' + error.message, 'error');
+            if (!state.resumeAutoplayInPlayer) {
+                setAddonsMessage('Movie metadata failed: ' + error.message, 'error');
+            }
+            setResumeLookupPlayerStatus('Loading movie streams...');
             loadStreamsForSelection();
         });
 }
@@ -1648,31 +2035,33 @@ function loadStreamsForSelection(options) {
     var shouldFocusStreams = !!(options && options.focusStreams);
 
     if (!state.selectedItem || !type || !videoId) {
-        setAddonsMessage('Choose a title first.', 'error');
         state.pendingResumePositionMs = 0;
         state.pendingResumeStream = null;
+        if (!failResumeLookupInPlayer('Choose a title first.')) {
+            setAddonsMessage('Choose a title first.', 'error');
+        }
         return Promise.resolve();
     }
 
     eligibleAddons = getStreamCapableAddons(type, videoId);
     if (!eligibleAddons.length) {
         var savedPlayable = state.autoplayPending ? getPendingResumeStreamCandidate() : null;
+        var noAddonMessage = state.authKey
+            ? 'No linked addons expose stream resources for this selection.'
+            : 'No stream addons are available yet. Sign in with Nuvio to sync your addon collection.';
         state.autoplayPending = false;
         if (savedPlayable) {
             state.pendingResumeStream = null;
-            openStream(savedPlayable);
+            openPlayableOrBridgeStream(savedPlayable);
             return Promise.resolve();
         }
         state.streams = [];
         state.pendingResumePositionMs = 0;
         state.pendingResumeStream = null;
         renderStreamList();
-        setAddonsMessage(
-            state.authKey
-                ? 'No linked addons expose stream resources for this selection.'
-                : 'No stream addons are available yet. Sign in with Nuvio to sync your addon collection.',
-            'error'
-        );
+        if (!failResumeLookupInPlayer(noAddonMessage)) {
+            setAddonsMessage(noAddonMessage, 'error');
+        }
         if (shouldFocusStreams && state.selectedType === 'series') {
             state.detailMode = 'episodes';
             renderAddons();
@@ -1686,6 +2075,7 @@ function loadStreamsForSelection(options) {
 
     state.streams = [];
     renderStreamList();
+    setResumeLookupPlayerStatus('Loading streams from ' + eligibleAddons.length + ' addon(s)...');
     setAddonsMessage('Loading streams from ' + eligibleAddons.length + ' addon(s)...', null);
 
     return Promise.all(eligibleAddons.map(function(addon) {
@@ -1705,14 +2095,19 @@ function loadStreamsForSelection(options) {
                 state.autoplayPending = false;
                 var playable = resumeStream || state.streams.filter(function(entry) {
                     return entry.playable && entry.raw && entry.raw.url;
+                })[0] || state.streams.filter(function(entry) {
+                    return entry.bridgeable;
                 })[0];
                 if (playable) {
                     state.pendingResumeStream = null;
-                    openStream(playable);
+                    openPlayableOrBridgeStream(playable);
                     return;
                 }
                 state.pendingResumePositionMs = 0;
                 state.pendingResumeStream = null;
+                if (failResumeLookupInPlayer('No directly playable stream was returned.')) {
+                    return;
+                }
             }
             if (shouldFocusStreams) {
                 state.focusRegion = 'main';
@@ -1725,12 +2120,14 @@ function loadStreamsForSelection(options) {
             state.autoplayPending = false;
             if (savedPlayable) {
                 state.pendingResumeStream = null;
-                openStream(savedPlayable);
+                openPlayableOrBridgeStream(savedPlayable);
                 return;
             }
             state.pendingResumePositionMs = 0;
             state.pendingResumeStream = null;
-            setAddonsMessage('No stream entries were returned.', 'error');
+            if (!failResumeLookupInPlayer('No stream entries were returned.')) {
+                setAddonsMessage('No stream entries were returned.', 'error');
+            }
             if (shouldFocusStreams) {
                 if (state.selectedType === 'series') {
                     state.detailMode = 'episodes';

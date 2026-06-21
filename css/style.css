@@ -794,6 +794,20 @@ body[data-current-view="player"] .content-row.is-row-far {
     right: 10px;
 }
 
+.genre-chip.is-year-filter.is-selected,
+.genre-chip.is-rating-filter.is-selected {
+    color: #fff;
+    font-weight: 800;
+}
+
+.genre-chip.is-year-filter.is-selected::after,
+.genre-chip.is-rating-filter.is-selected::after {
+    bottom: 0;
+    height: 3px;
+    background: #fff;
+    box-shadow: 0 0 12px rgba(255, 255, 255, 0.42);
+}
+
 .card {
     position: relative;
     flex: 0 0 calc((100% - 54px) / 4.35);
@@ -2045,6 +2059,16 @@ input:focus {
 .genre-chip:focus::after,
 .genre-chip:hover::after {
     background: rgba(255, 255, 255, 0.72);
+}
+
+.genre-chip.is-year-filter.is-selected:focus::after,
+.genre-chip.is-year-filter.is-selected:hover::after,
+.genre-chip.is-rating-filter.is-selected:focus::after,
+.genre-chip.is-rating-filter.is-selected:hover::after {
+    bottom: 0;
+    height: 3px;
+    background: #fff;
+    box-shadow: 0 0 12px rgba(255, 255, 255, 0.42);
 }
 
 .card:focus {

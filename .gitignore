@@ -3,5 +3,6 @@
 .cache/
 *.wgt
 .DS_Store
+js/local-config.js
 *.txt
 !install_commands.txt

@@ -8,6 +8,8 @@ var TV_LOGIN_REDIRECT_BASE_URL = 'https://nuvioapp.space/tv-login';
 var AUDIO_TRANSCODER_BASE_URL = 'http://10.0.0.10:8787';
 var IMDB_CATALOG_API_BASE_URL = 'http://10.0.0.10:8791';
 var IMDB_API_BASE_URL = 'https://api.imdbapi.dev';
+var TORRENT_BRIDGE_BASE_URL = '';
+var TORRENT_BRIDGE_TOKEN = '';
 var STORAGE_AUTH = 'nuvio.accessToken';
 var STORAGE_REFRESH = 'nuvio.refreshToken';
 var STORAGE_USER = 'nuvio.user';
@@ -223,6 +225,8 @@ var state = {
     seriesBrowseLoadingMore: false,
     movieBrowseExpansionIndex: Math.floor(Math.random() * 1000),
     seriesBrowseExpansionIndex: Math.floor(Math.random() * 1000),
+    movieBrowseRequestId: 0,
+    seriesBrowseRequestId: 0,
     movieYearWindowStart: 0,
     seriesYearWindowStart: 0,
     movieYearFilterOpen: false,
@@ -256,6 +260,7 @@ var state = {
     detailMode: 'details',
     streams: [],
     currentStream: null,
+    torrentBridgeJobs: {},
     audioTracks: [],
     audioTrackFailures: {},
     subtitleTracks: [],
@@ -272,6 +277,7 @@ var state = {
     durationMs: 0,
     pendingResumePositionMs: 0,
     pendingResumeStream: null,
+    resumeAutoplayInPlayer: false,
     lastProgressSavedAt: 0,
     lastProgressSavedPositionMs: 0,
     suppressProgressSave: false,

@@ -41,10 +41,12 @@ function bindDetailActions() {
     byId('detailPlayButton').addEventListener('click', function() {
         var playable = state.streams.filter(function(entry) {
             return entry.playable && entry.raw && entry.raw.url;
+        })[0] || state.streams.filter(function(entry) {
+            return entry.bridgeable;
         })[0];
 
         if (playable) {
-            openStream(playable);
+            openPlayableOrBridgeStream(playable);
             return;
         }
 

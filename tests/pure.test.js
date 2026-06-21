@@ -272,6 +272,120 @@ function testImdbRatingFilter() {
   sandbox.state.selectedMovieGenre = '';
 }
 
+function testTorrentBridgeHelpers() {
+  const previousBaseUrl = sandbox.TORRENT_BRIDGE_BASE_URL;
+  const previousToken = sandbox.TORRENT_BRIDGE_TOKEN;
+  const stream = {
+    raw: {
+      infoHash: '0123456789abcdef0123456789abcdef01234567',
+      fileIdx: 2,
+      name: 'Example'
+    }
+  };
+
+  try {
+    sandbox.TORRENT_BRIDGE_BASE_URL = 'http://bridge.example.test:8788/';
+    sandbox.TORRENT_BRIDGE_TOKEN = 'secret';
+
+    assert.strictEqual(sandbox.getTorrentBridgeBaseUrl(), 'http://bridge.example.test:8788');
+    assert.strictEqual(sandbox.getStreamInfoHash(stream), '0123456789abcdef0123456789abcdef01234567');
+    assert.strictEqual(sandbox.isTorrentBridgeCandidate(stream), true);
+    assert.strictEqual(
+      sandbox.getTorrentBridgeJobKey(stream),
+      '0123456789abcdef0123456789abcdef01234567:2'
+    );
+    const payload = sandbox.getTorrentBridgePayload(stream);
+    assert.strictEqual(payload.infoHash, '0123456789abcdef0123456789abcdef01234567');
+    assert.strictEqual(payload.fileIndex, 2);
+    assert.strictEqual(payload.title, 'Example');
+  } finally {
+    sandbox.TORRENT_BRIDGE_BASE_URL = previousBaseUrl;
+    sandbox.TORRENT_BRIDGE_TOKEN = previousToken;
+  }
+}
+
+async function testBrowseRequestVersioning() {
+  const previousFetchRatingCombinedBrowse = sandbox.fetchRatingCombinedBrowse;
+  const previousUpdateConnectionStatus = sandbox.updateConnectionStatus;
+  const previousRenderBrowseViews = sandbox.renderBrowseViews;
+  const previousScheduleBrowsePrefetch = sandbox.scheduleBrowsePrefetch;
+  const previousMovieGenres = sandbox.state.movieGenres;
+  const previousSelectedMovieGenre = sandbox.state.selectedMovieGenre;
+  const previousSelectedMovieRating = sandbox.state.selectedMovieRating;
+  const previousMovieBrowseItems = sandbox.state.movieBrowseItems;
+  const previousMovieBrowseRequestId = sandbox.state.movieBrowseRequestId;
+  const ratingOptions = sandbox.getRatingFilterOptionsForRender('movie');
+  const ratingEight = ratingOptions.filter((option) => option.label === '8')[0];
+  const ratingSeven = ratingOptions.filter((option) => option.label === '7')[0];
+  const movieOption = {
+    key: 'popular',
+    label: 'Popular',
+    addon: { transportUrl: 'https://v3-cinemeta.strem.io/manifest.json' },
+    type: 'movie',
+    catalogId: 'top',
+    filterGroup: 'catalog'
+  };
+  const deferred = [];
+
+  function makeDeferred() {
+    let resolve;
+    let reject;
+    const promise = new Promise((promiseResolve, promiseReject) => {
+      resolve = promiseResolve;
+      reject = promiseReject;
+    });
+
+    return { promise, resolve, reject };
+  }
+
+  try {
+    sandbox.state.movieGenres = [movieOption];
+    sandbox.state.selectedMovieGenre = movieOption.key;
+    sandbox.state.selectedMovieRating = ratingEight.key;
+    sandbox.state.movieBrowseItems = [];
+    sandbox.state.movieBrowseRequestId = 0;
+    sandbox.updateConnectionStatus = () => {};
+    sandbox.renderBrowseViews = () => {};
+    sandbox.scheduleBrowsePrefetch = () => {};
+    sandbox.fetchRatingCombinedBrowse = () => {
+      const next = makeDeferred();
+      deferred.push(next);
+      return next.promise;
+    };
+
+    const firstRequest = sandbox.fetchBrowseCatalog('movie', false);
+    sandbox.state.selectedMovieRating = ratingSeven.key;
+    const secondRequest = sandbox.fetchBrowseCatalog('movie', false);
+
+    assert.strictEqual(deferred.length, 2);
+    deferred[1].resolve({
+      items: [{ id: 'tt-new', name: 'New rating' }],
+      nextSkip: 50,
+      canLoadMore: false
+    });
+    await secondRequest;
+    assert.strictEqual(sandbox.state.movieBrowseItems[0].id, 'tt-new');
+
+    deferred[0].resolve({
+      items: [{ id: 'tt-old', name: 'Old rating' }],
+      nextSkip: 50,
+      canLoadMore: false
+    });
+    await firstRequest;
+    assert.strictEqual(sandbox.state.movieBrowseItems[0].id, 'tt-new');
+  } finally {
+    sandbox.fetchRatingCombinedBrowse = previousFetchRatingCombinedBrowse;
+    sandbox.updateConnectionStatus = previousUpdateConnectionStatus;
+    sandbox.renderBrowseViews = previousRenderBrowseViews;
+    sandbox.scheduleBrowsePrefetch = previousScheduleBrowsePrefetch;
+    sandbox.state.movieGenres = previousMovieGenres;
+    sandbox.state.selectedMovieGenre = previousSelectedMovieGenre;
+    sandbox.state.selectedMovieRating = previousSelectedMovieRating;
+    sandbox.state.movieBrowseItems = previousMovieBrowseItems;
+    sandbox.state.movieBrowseRequestId = previousMovieBrowseRequestId;
+  }
+}
+
 function testMetadataFormatting() {
   const item = {
     id: 'tt-meta',
@@ -574,6 +688,37 @@ function testResumeAndTranscodedTimelineHelpers() {
     '4K stream'
   );
 
+  assert.strictEqual(
+    sandbox.applySavedResumeVideoFallback({
+      kind: 'series',
+      item: { id: 'ttshow', name: 'Show' },
+      video: { id: 'ttshow:2:3', season: 2, episode: 3, title: 'Third' }
+    }),
+    true
+  );
+  assert.strictEqual(sandbox.state.selectedVideo.id, 'ttshow:2:3');
+  assert.strictEqual(sandbox.state.availableSeasons.length, 1);
+  assert.strictEqual(sandbox.state.availableSeasons[0], 2);
+
+  const previousOpenStream = sandbox.openStream;
+  let openedStream = null;
+  sandbox.openStream = (stream) => {
+    openedStream = stream;
+  };
+  try {
+    assert.strictEqual(
+      sandbox.resumeContinueEntryDirectly(normalizedEntry),
+      true
+    );
+    assert.strictEqual(openedStream.raw.url, savedStream.raw.url);
+    assert.strictEqual(sandbox.state.selectedItem.id, 'tt123');
+    assert.strictEqual(sandbox.state.selectedType, 'movie');
+    assert.strictEqual(sandbox.state.selectedVideo.id, 'tt123');
+    assert.strictEqual(sandbox.state.pendingResumePositionMs, 20000);
+  } finally {
+    sandbox.openStream = previousOpenStream;
+  }
+
   sandbox.state.transcodedPlaybackActive = true;
   sandbox.state.transcodedSourceUrl = 'https://example.test/movie.mkv';
   sandbox.state.transcodedOffsetMs = 120000;
@@ -599,6 +744,8 @@ function testResumeAndTranscodedTimelineHelpers() {
     testBrowseGenreFiltering,
     testYearFilterDefaultAll,
     testImdbRatingFilter,
+    testTorrentBridgeHelpers,
+    testBrowseRequestVersioning,
     testMetadataFormatting,
     testImdbApiDetailHelpers,
     testBrowseArtworkEnrichment,

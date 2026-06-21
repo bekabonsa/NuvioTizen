@@ -558,6 +558,24 @@ function setBrowseExpansionIndex(type, index) {
     state.seriesBrowseExpansionIndex = index;
 }
 
+function getBrowseRequestId(type) {
+    return type === 'movie' ? state.movieBrowseRequestId : state.seriesBrowseRequestId;
+}
+
+function bumpBrowseRequestId(type) {
+    if (type === 'movie') {
+        state.movieBrowseRequestId += 1;
+        return state.movieBrowseRequestId;
+    }
+
+    state.seriesBrowseRequestId += 1;
+    return state.seriesBrowseRequestId;
+}
+
+function isBrowseRequestCurrent(type, requestId) {
+    return getBrowseRequestId(type) === requestId;
+}
+
 function getYearWindowStart(type) {
     return type === 'movie' ? state.movieYearWindowStart : state.seriesYearWindowStart;
 }
