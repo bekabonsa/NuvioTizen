@@ -112,6 +112,28 @@ function bindBrowse() {
     });
 }
 
+function bindLibrary() {
+    byId('librarySavedToggle').addEventListener('click', function() {
+        setLibraryMode('saved');
+        state.focusRegion = 'main';
+        state.mainRow = 0;
+        state.mainCol = 0;
+        focusCurrent();
+    });
+
+    byId('libraryDownloadsToggle').addEventListener('click', function() {
+        setLibraryMode('downloads');
+        state.focusRegion = 'main';
+        state.mainRow = 0;
+        state.mainCol = 1;
+        focusCurrent();
+    });
+
+    byId('downloadedLibraryRefreshButton').addEventListener('click', function() {
+        refreshDownloadedLibrary(true);
+    });
+}
+
 function bindLogin() {
     byId('loginForm').addEventListener('submit', function(event) {
         var email = byId('emailInput').value.trim();
@@ -562,6 +584,7 @@ function init() {
     bindDetailActions();
     bindSearch();
     bindBrowse();
+    bindLibrary();
     bindLogin();
     bindPlayer();
 

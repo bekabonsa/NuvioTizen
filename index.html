@@ -138,10 +138,23 @@
                                 <span class="section-kicker">Saved</span>
                                 <h2>Library</h2>
                             </div>
-                            <span class="section-count" id="libraryCount">Nothing saved yet</span>
+                            <div class="library-header-actions">
+                                <div class="library-toggle" id="libraryToggle" role="group" aria-label="Library view">
+                                    <button class="library-toggle-button is-selected" id="librarySavedToggle" type="button">Saved</button>
+                                    <button class="library-toggle-button" id="libraryDownloadsToggle" type="button">Downloads</button>
+                                </div>
+                                <span class="section-count" id="libraryCount">Nothing saved yet</span>
+                            </div>
                         </div>
                         <p class="section-copy" id="libraryEmptyState">Add films and series from their detail pages to keep them here.</p>
                         <div class="card-row-stack library-grid" id="libraryGrid"></div>
+                        <div class="downloaded-library-panel" id="downloadedLibraryPanel">
+                            <div class="downloaded-library-toolbar">
+                                <p class="section-copy downloaded-library-message" id="downloadedLibraryMessage">Bridge cache files stored on your Oracle node.</p>
+                                <button class="action-button downloaded-library-refresh" id="downloadedLibraryRefreshButton" type="button">Refresh</button>
+                            </div>
+                            <div class="downloaded-library-list" id="downloadedLibraryList"></div>
+                        </div>
                     </section>
                 </section>
 

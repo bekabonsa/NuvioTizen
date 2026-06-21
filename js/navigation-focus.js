@@ -63,12 +63,15 @@ function buildMainRowContainers() {
     }
 
     if (state.currentView === 'library') {
-        var libraryContainers = [];
-        queryAll('#libraryGrid .card-row').forEach(function(row) {
-            libraryContainers.push(row);
-        });
-        if (!libraryContainers.length) {
-            libraryContainers.push(byId('libraryShelfSection'));
+        var libraryContainers = [byId('libraryShelfSection')];
+        if (state.libraryMode === 'downloads') {
+            queryAll('#downloadedLibraryList .downloaded-library-row').forEach(function(row) {
+                libraryContainers.push(row);
+            });
+        } else {
+            queryAll('#libraryGrid .card-row').forEach(function(row) {
+                libraryContainers.push(row);
+            });
         }
         return libraryContainers.filter(Boolean);
     }
@@ -198,6 +201,32 @@ function buildMainRows() {
 
     if (state.currentView === 'library') {
         var libraryRows = [];
+        var libraryToggles = queryAll('#libraryToggle .library-toggle-button').filter(isVisibleControl);
+
+        if (libraryToggles.length) {
+            libraryRows.push(libraryToggles);
+        }
+
+        if (state.libraryMode === 'downloads') {
+            var refreshButton = byId('downloadedLibraryRefreshButton');
+            var downloadedRows = queryAll('#downloadedLibraryList .downloaded-library-row');
+
+            if (refreshButton && isVisibleControl(refreshButton)) {
+                libraryRows.push([refreshButton]);
+            }
+
+            downloadedRows.forEach(function(row) {
+                var deleteButton = queryAll('#' + row.id + ' .downloaded-delete-button')[0];
+                if (deleteButton && isVisibleControl(deleteButton)) {
+                    libraryRows.push([row, deleteButton]);
+                    return;
+                }
+                libraryRows.push([row]);
+            });
+
+            return libraryRows;
+        }
+
         var libraryCardRows = queryAll('#libraryGrid .card-row');
 
         libraryCardRows.forEach(function(row) {

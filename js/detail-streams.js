@@ -350,10 +350,34 @@ function requestTorrentBridge(path, method, body) {
     );
 }
 
+function getTorrentBridgePayloadMetadata(streamEntry) {
+    var item = state.selectedItem || {};
+    var video = state.selectedVideo || {};
+    var raw = streamEntry && streamEntry.raw ? streamEntry.raw : {};
+    var metadata = {
+        itemId: item.id || '',
+        itemName: item.name || '',
+        itemType: state.selectedType || '',
+        poster: item.poster || '',
+        background: item.background || item.poster || '',
+        videoId: video.id || '',
+        videoTitle: video.title || video.name || '',
+        streamTitle: raw.title || raw.name || streamEntry && streamEntry.title || ''
+    };
+
+    if (state.selectedType === 'series') {
+        metadata.season = getVideoSeason(video);
+        metadata.episode = getVideoEpisode(video);
+    }
+
+    return metadata;
+}
+
 function getTorrentBridgePayload(streamEntry) {
     var raw = streamEntry && streamEntry.raw ? streamEntry.raw : {};
     var payload = {
-        infoHash: getStreamInfoHash(streamEntry)
+        infoHash: getStreamInfoHash(streamEntry),
+        metadata: getTorrentBridgePayloadMetadata(streamEntry)
     };
 
     if (raw.magnet) {

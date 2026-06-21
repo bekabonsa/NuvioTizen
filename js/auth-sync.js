@@ -1143,22 +1143,346 @@ function getLibraryCardItems() {
     });
 }
 
-function renderLibraryView() {
-    var items = getLibraryCardItems();
-    var empty = byId('libraryEmptyState');
+function isDownloadedLibraryMode() {
+    return state.libraryMode === 'downloads';
+}
 
-    if (!byId('libraryGrid')) {
+function setLibraryMode(mode) {
+    state.libraryMode = mode === 'downloads' ? 'downloads' : 'saved';
+    renderLibraryView();
+    if (isDownloadedLibraryMode()) {
+        refreshDownloadedLibrary(false);
+    }
+}
+
+function getDownloadedLibraryTitle(item) {
+    var metadata = item && item.metadata || {};
+    return metadata.itemName || item.name || 'Cached torrent';
+}
+
+function getDownloadedLibrarySubtitle(item) {
+    var metadata = item && item.metadata || {};
+    var parts = [];
+
+    if (metadata.itemType) {
+        parts.push(metadata.itemType === 'series' ? 'Series' : 'Movie');
+    }
+    if (metadata.videoTitle && metadata.videoTitle !== metadata.itemName) {
+        parts.push(metadata.videoTitle);
+    }
+    if (metadata.season || metadata.episode) {
+        parts.push('S' + String(metadata.season || 0).padStart(2, '0') + 'E' + String(metadata.episode || 0).padStart(2, '0'));
+    }
+    if (!parts.length && metadata.streamTitle) {
+        parts.push(metadata.streamTitle);
+    }
+
+    return parts.join(' • ') || 'Bridge cache';
+}
+
+function formatDownloadedPercent(value) {
+    var progress = typeof value === 'number' && isFinite(value) ? value : 0;
+    return Math.round(Math.max(0, Math.min(1, progress)) * 100);
+}
+
+function formatDownloadedBytes(value) {
+    var size = Number(value || 0);
+    var units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    var index = 0;
+
+    while (size >= 1024 && index < units.length - 1) {
+        size /= 1024;
+        index += 1;
+    }
+
+    if (index === 0) {
+        return Math.round(size) + ' ' + units[index];
+    }
+
+    return (size >= 10 ? size.toFixed(1) : size.toFixed(2)).replace(/\.0+$/, '') + ' ' + units[index];
+}
+
+function formatDownloadedDate(timestamp) {
+    var value = Number(timestamp || 0);
+    var date;
+
+    if (!value) {
+        return 'Unknown date';
+    }
+
+    date = new Date(value * 1000);
+    if (isNaN(date.getTime())) {
+        return 'Unknown date';
+    }
+
+    return date.toLocaleDateString(undefined, {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric'
+    });
+}
+
+function getDownloadedLibraryMeta(item) {
+    var parts = [];
+    var cachedAt = item.metadata && item.metadata.cachedAt || item.addedOn;
+    var size = item.totalSize || item.size || item.file && item.file.size;
+
+    parts.push(formatDownloadedPercent(item.progress) + '%');
+    if (item.state) {
+        parts.push(item.state);
+    }
+    if (size) {
+        parts.push(formatDownloadedBytes(size));
+    }
+    parts.push('Added ' + formatDownloadedDate(cachedAt));
+    if (item.seeds || item.seeds === 0) {
+        parts.push(item.seeds + ' seeds');
+    }
+
+    return parts.join(' • ');
+}
+
+function getDownloadedLibraryFileName(item) {
+    return item.file && item.file.name || item.name || '';
+}
+
+function normalizeDownloadedLibraryItems(payload) {
+    var items = payload && Array.isArray(payload.items) ? payload.items : payload;
+    if (!Array.isArray(items)) {
+        return [];
+    }
+
+    return items.filter(function(item) {
+        return item && item.hash;
+    });
+}
+
+function canUseDownloadedLibrary() {
+    return typeof getTorrentBridgeBaseUrl === 'function'
+        && typeof getTorrentBridgeToken === 'function'
+        && getTorrentBridgeBaseUrl()
+        && getTorrentBridgeToken()
+        && typeof requestTorrentBridge === 'function';
+}
+
+function refreshDownloadedLibrary(force) {
+    if (!canUseDownloadedLibrary()) {
+        state.downloadedLibraryItems = [];
+        state.downloadedLibraryError = 'Torrent bridge is not configured on this app build.';
+        state.downloadedLibraryLoading = false;
+        renderLibraryView();
+        return Promise.resolve([]);
+    }
+
+    if (state.downloadedLibraryLoading) {
+        return Promise.resolve(state.downloadedLibraryItems);
+    }
+
+    if (!force && state.downloadedLibraryLoadedAt && Date.now() - state.downloadedLibraryLoadedAt < 10000) {
+        return Promise.resolve(state.downloadedLibraryItems);
+    }
+
+    state.downloadedLibraryLoading = true;
+    state.downloadedLibraryError = '';
+    renderLibraryView();
+
+    return requestTorrentBridge('/api/torrents', 'GET').then(function(payload) {
+        state.downloadedLibraryItems = normalizeDownloadedLibraryItems(payload);
+        state.downloadedLibraryLoadedAt = Date.now();
+        state.downloadedLibraryLoading = false;
+        state.downloadedLibraryError = '';
+        renderLibraryView();
+        return state.downloadedLibraryItems;
+    }).catch(function(error) {
+        state.downloadedLibraryLoading = false;
+        state.downloadedLibraryError = error.message || 'Could not load downloaded library.';
+        renderLibraryView();
+        return [];
+    });
+}
+
+function deleteDownloadedLibraryItem(hash) {
+    if (!hash || !canUseDownloadedLibrary() || state.downloadedLibraryDeleting[hash]) {
         return;
     }
 
-    renderCardRows('libraryGrid', items, null, LIBRARY_ROW_SIZE, {
-        hideSynopsis: true
+    state.downloadedLibraryDeleting[hash] = true;
+    renderLibraryView();
+
+    requestTorrentBridge('/api/torrents/' + encodeURIComponent(hash) + '?deleteFiles=1', 'DELETE').then(function() {
+        delete state.downloadedLibraryDeleting[hash];
+        state.downloadedLibraryItems = state.downloadedLibraryItems.filter(function(item) {
+            return item.hash !== hash;
+        });
+        state.downloadedLibraryLoadedAt = 0;
+        renderLibraryView();
+        return refreshDownloadedLibrary(true);
+    }).catch(function(error) {
+        delete state.downloadedLibraryDeleting[hash];
+        state.downloadedLibraryError = error.message || 'Could not delete cached file.';
+        renderLibraryView();
     });
-    byId('libraryCount').textContent = items.length
-        ? items.length + ' saved'
-        : 'Nothing saved yet';
+}
+
+function createDownloadedPoster(imageUrl, title) {
+    var poster = document.createElement('div');
+    poster.className = 'downloaded-library-poster';
+
+    function showEmpty() {
+        poster.innerHTML = '';
+        poster.textContent = 'No poster';
+    }
+
+    if (!imageUrl) {
+        showEmpty();
+        return poster;
+    }
+
+    var img = document.createElement('img');
+    img.decoding = 'async';
+    img.loading = 'lazy';
+    img.alt = title || 'Poster';
+    img.onerror = showEmpty;
+    img.src = imageUrl;
+    poster.appendChild(img);
+    return poster;
+}
+
+function renderDownloadedLibraryView() {
+    var list = byId('downloadedLibraryList');
+    var message = byId('downloadedLibraryMessage');
+    var fragment = document.createDocumentFragment();
+    var items = state.downloadedLibraryItems || [];
+
+    if (!list || !message) {
+        return;
+    }
+
+    list.innerHTML = '';
+
+    if (state.downloadedLibraryLoading) {
+        message.textContent = 'Loading cached files from your Oracle node...';
+    } else if (state.downloadedLibraryError) {
+        message.textContent = state.downloadedLibraryError;
+    } else if (!items.length) {
+        message.textContent = 'No bridge cache files are currently stored on your Oracle node.';
+    } else {
+        message.textContent = 'Bridge cache files stored on your Oracle node.';
+    }
+
+    items.forEach(function(item, index) {
+        var metadata = item.metadata || {};
+        var titleText = getDownloadedLibraryTitle(item);
+        var row = document.createElement('div');
+        var main = document.createElement('div');
+        var title = document.createElement('div');
+        var subtitle = document.createElement('div');
+        var meta = document.createElement('div');
+        var file = document.createElement('div');
+        var progressRow = document.createElement('div');
+        var progressRail = document.createElement('div');
+        var progressFill = document.createElement('div');
+        var progressLabel = document.createElement('div');
+        var actions = document.createElement('div');
+        var deleteButton = document.createElement('button');
+        var percent = formatDownloadedPercent(item.progress);
+
+        row.className = 'downloaded-library-row';
+        row.id = 'downloadedLibraryRow' + index;
+        row.setAttribute('tabindex', '-1');
+
+        main.className = 'downloaded-library-main';
+        title.className = 'downloaded-library-title';
+        subtitle.className = 'downloaded-library-subtitle';
+        meta.className = 'downloaded-library-meta';
+        file.className = 'downloaded-library-file';
+        progressRow.className = 'downloaded-progress-row';
+        progressRail.className = 'downloaded-progress-rail';
+        progressFill.className = 'downloaded-progress-fill';
+        progressLabel.className = 'downloaded-progress-label';
+        actions.className = 'downloaded-library-actions';
+        deleteButton.className = 'action-button downloaded-delete-button';
+        deleteButton.type = 'button';
+        deleteButton.setAttribute('tabindex', '-1');
+
+        title.textContent = titleText;
+        subtitle.textContent = getDownloadedLibrarySubtitle(item);
+        meta.textContent = getDownloadedLibraryMeta(item);
+        file.textContent = getDownloadedLibraryFileName(item);
+        progressFill.style.width = percent + '%';
+        progressLabel.textContent = percent + '%';
+        deleteButton.textContent = state.downloadedLibraryDeleting[item.hash] ? 'Deleting' : 'Delete';
+        deleteButton.disabled = !!state.downloadedLibraryDeleting[item.hash];
+        deleteButton.addEventListener('click', function(event) {
+            event.stopPropagation();
+            deleteDownloadedLibraryItem(item.hash);
+        });
+
+        progressRail.appendChild(progressFill);
+        progressRow.appendChild(progressRail);
+        progressRow.appendChild(progressLabel);
+        main.appendChild(title);
+        main.appendChild(subtitle);
+        main.appendChild(progressRow);
+        main.appendChild(meta);
+        if (file.textContent) {
+            main.appendChild(file);
+        }
+        actions.appendChild(deleteButton);
+        row.appendChild(createDownloadedPoster(metadata.poster || metadata.background, titleText));
+        row.appendChild(main);
+        row.appendChild(actions);
+        fragment.appendChild(row);
+    });
+
+    list.appendChild(fragment);
+    markFocusRegistryDirty();
+}
+
+function renderLibraryView() {
+    var items = getLibraryCardItems();
+    var empty = byId('libraryEmptyState');
+    var grid = byId('libraryGrid');
+    var downloadedPanel = byId('downloadedLibraryPanel');
+    var savedToggle = byId('librarySavedToggle');
+    var downloadsToggle = byId('libraryDownloadsToggle');
+    var savedMode = !isDownloadedLibraryMode();
+
+    if (!grid) {
+        return;
+    }
+
+    if (savedToggle) {
+        savedToggle.classList.toggle('is-selected', savedMode);
+    }
+    if (downloadsToggle) {
+        downloadsToggle.classList.toggle('is-selected', !savedMode);
+    }
+
+    grid.style.display = savedMode ? '' : 'none';
+    if (downloadedPanel) {
+        downloadedPanel.classList.toggle('is-visible', !savedMode);
+    }
+
+    if (savedMode) {
+        renderCardRows('libraryGrid', items, null, LIBRARY_ROW_SIZE, {
+            hideSynopsis: true
+        });
+        byId('libraryCount').textContent = items.length
+            ? items.length + ' saved'
+            : 'Nothing saved yet';
+    } else {
+        renderDownloadedLibraryView();
+        byId('libraryCount').textContent = state.downloadedLibraryLoading
+            ? 'Loading downloads'
+            : state.downloadedLibraryItems.length + ' cached';
+    }
+
     if (empty) {
-        empty.classList.toggle('is-visible', !items.length);
+        empty.textContent = savedMode
+            ? 'Add films and series from their detail pages to keep them here.'
+            : '';
+        empty.classList.toggle('is-visible', savedMode && !items.length);
     }
 }
 
