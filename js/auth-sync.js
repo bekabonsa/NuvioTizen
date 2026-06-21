@@ -1334,6 +1334,142 @@ function deleteDownloadedLibraryItem(hash) {
     });
 }
 
+function getDownloadedLibraryFileIndex(item) {
+    return item && item.file && typeof item.file.index !== 'undefined'
+        ? item.file.index
+        : null;
+}
+
+function buildDownloadedLibrarySelection(item) {
+    var metadata = item && item.metadata || {};
+    var itemType = metadata.itemType === 'series' ? 'series' : 'movie';
+    var title = getDownloadedLibraryTitle(item);
+    var fileName = getDownloadedLibraryFileName(item);
+    var selectedItem = {
+        id: metadata.itemId || item && item.hash || ('bridge:' + title),
+        name: title,
+        poster: metadata.poster || '',
+        background: metadata.background || metadata.poster || '',
+        description: metadata.streamTitle || fileName || 'Cached bridge stream',
+        releaseInfo: '',
+        year: ''
+    };
+    var selectedVideo = null;
+
+    if (itemType === 'series') {
+        selectedVideo = {
+            id: metadata.videoId || ((item && item.hash || 'bridge') + ':' + String(getDownloadedLibraryFileIndex(item) || 0)),
+            title: metadata.videoTitle || fileName || title,
+            season: metadata.season || null,
+            episode: metadata.episode || null
+        };
+    }
+
+    return {
+        item: selectedItem,
+        type: itemType,
+        video: selectedVideo
+    };
+}
+
+function buildDownloadedLibraryStreamEntry(item) {
+    var metadata = item && item.metadata || {};
+    var title = getDownloadedLibraryTitle(item);
+    var subtitle = getDownloadedLibrarySubtitle(item);
+    var fileName = getDownloadedLibraryFileName(item);
+    var fileIndex = getDownloadedLibraryFileIndex(item);
+    var raw = {
+        url: item.streamUrl,
+        name: metadata.streamTitle || fileName || title,
+        title: metadata.streamTitle || fileName || title,
+        description: subtitle,
+        infoHash: item.hash
+    };
+
+    if (fileIndex !== null) {
+        raw.fileIdx = fileIndex;
+    }
+
+    return {
+        addonName: 'Torrent Bridge',
+        addonBaseUrl: getTorrentBridgeBaseUrl(),
+        playable: true,
+        bridgeable: false,
+        status: 'Playable',
+        title: title,
+        description: [subtitle, fileName].filter(Boolean).join(' • '),
+        raw: raw
+    };
+}
+
+function openDownloadedLibraryStream(item) {
+    var selection = buildDownloadedLibrarySelection(item);
+    state.selectedItem = selection.item;
+    state.selectedType = selection.type;
+    state.selectedVideo = selection.video;
+    state.streams = [];
+    state.detailMode = 'details';
+    openStream(buildDownloadedLibraryStreamEntry(item));
+}
+
+function replaceDownloadedLibraryItem(updatedItem) {
+    var replaced = false;
+
+    state.downloadedLibraryItems = state.downloadedLibraryItems.map(function(item) {
+        if (item.hash === updatedItem.hash) {
+            replaced = true;
+            return updatedItem;
+        }
+        return item;
+    });
+
+    if (!replaced) {
+        state.downloadedLibraryItems = [updatedItem].concat(state.downloadedLibraryItems);
+    }
+}
+
+function openDownloadedLibraryItem(item) {
+    var fileIndex;
+    var path;
+
+    if (!item || !item.hash || state.downloadedLibraryDeleting[item.hash]) {
+        return;
+    }
+
+    if (item.streamUrl) {
+        openDownloadedLibraryStream(item);
+        return;
+    }
+
+    if (!canUseDownloadedLibrary()) {
+        state.downloadedLibraryError = 'Torrent bridge is not configured on this app build.';
+        renderLibraryView();
+        return;
+    }
+
+    state.downloadedLibraryError = 'Checking cached stream status...';
+    renderLibraryView();
+
+    fileIndex = getDownloadedLibraryFileIndex(item);
+    path = '/api/torrents/' + encodeURIComponent(item.hash);
+    if (fileIndex !== null) {
+        path += '?fileIndex=' + encodeURIComponent(String(fileIndex));
+    }
+
+    requestTorrentBridge(path, 'GET').then(function(updatedItem) {
+        replaceDownloadedLibraryItem(updatedItem);
+        if (updatedItem && updatedItem.streamUrl) {
+            openDownloadedLibraryStream(updatedItem);
+            return;
+        }
+        state.downloadedLibraryError = 'This cache item is still downloading and is not streamable yet.';
+        renderLibraryView();
+    }).catch(function(error) {
+        state.downloadedLibraryError = error.message || 'Could not open cached stream.';
+        renderLibraryView();
+    });
+}
+
 function createDownloadedPoster(imageUrl, title) {
     var poster = document.createElement('div');
     poster.className = 'downloaded-library-poster';
@@ -1399,7 +1535,11 @@ function renderDownloadedLibraryView() {
 
         row.className = 'downloaded-library-row';
         row.id = 'downloadedLibraryRow' + index;
+        row.setAttribute('role', 'button');
         row.setAttribute('tabindex', '-1');
+        row.addEventListener('click', function() {
+            openDownloadedLibraryItem(item);
+        });
 
         main.className = 'downloaded-library-main';
         title.className = 'downloaded-library-title';
