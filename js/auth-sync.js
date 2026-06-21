@@ -1160,6 +1160,16 @@ function getDownloadedLibraryTitle(item) {
     return metadata.itemName || item.name || 'Cached torrent';
 }
 
+function formatDownloadedEpisodeNumber(value) {
+    var number = parseInt(value, 10);
+
+    if (!number || isNaN(number)) {
+        return '00';
+    }
+
+    return number < 10 ? '0' + number : String(number);
+}
+
 function getDownloadedLibrarySubtitle(item) {
     var metadata = item && item.metadata || {};
     var parts = [];
@@ -1171,7 +1181,7 @@ function getDownloadedLibrarySubtitle(item) {
         parts.push(metadata.videoTitle);
     }
     if (metadata.season || metadata.episode) {
-        parts.push('S' + String(metadata.season || 0).padStart(2, '0') + 'E' + String(metadata.episode || 0).padStart(2, '0'));
+        parts.push('S' + formatDownloadedEpisodeNumber(metadata.season) + 'E' + formatDownloadedEpisodeNumber(metadata.episode));
     }
     if (!parts.length && metadata.streamTitle) {
         parts.push(metadata.streamTitle);

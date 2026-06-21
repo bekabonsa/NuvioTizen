@@ -298,11 +298,6 @@ function handleLeft() {
     if (state.focusRegion === 'nav') {
         if (state.navIndex > 0) {
             state.navIndex -= 1;
-            setView(NAV_VIEWS[state.navIndex], {
-                focusRegion: 'nav',
-                resetMain: true,
-                pushHistory: false
-            });
             focusCurrent();
         }
         return;
@@ -377,11 +372,6 @@ function handleRight() {
     if (state.focusRegion === 'nav') {
         if (state.navIndex < NAV_VIEWS.length - 1) {
             state.navIndex += 1;
-            setView(NAV_VIEWS[state.navIndex], {
-                focusRegion: 'nav',
-                resetMain: true,
-                pushHistory: false
-            });
             focusCurrent();
             return;
         }

@@ -1721,7 +1721,7 @@ function refreshPlaybackTracks() {
 }
 
 function scheduleTrackRefresh() {
-    [120, 450, 1200].forEach(function(delay) {
+    [120, 450, 1200, 2500, 5000, 9000].forEach(function(delay) {
         setTimeout(refreshPlaybackTracks, delay);
     });
 }

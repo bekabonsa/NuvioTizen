@@ -33,9 +33,12 @@ METADATA_KEYS = {
     "episode",
     "streamTitle",
 }
+STREAM_WAIT_SECONDS = 25
+STREAM_WAIT_INTERVAL_SECONDS = 0.5
 
 session = requests.Session()
 last_login = 0
+preferences_cache = {"loaded_at": 0, "value": {}}
 
 
 def qbt_login():
@@ -75,6 +78,19 @@ def qbt_post(path, data=None, files=None):
         response = session.post(QBT_URL + path, data=data or {}, files=files, timeout=30)
     response.raise_for_status()
     return response
+
+
+def qbt_preferences():
+    now = time.time()
+    if now - preferences_cache["loaded_at"] < 60:
+        return preferences_cache["value"]
+    try:
+        value = qbt_get("/api/v2/app/preferences").json()
+    except Exception:
+        value = {}
+    preferences_cache["loaded_at"] = now
+    preferences_cache["value"] = value if isinstance(value, dict) else {}
+    return preferences_cache["value"]
 
 
 def magnet_from_payload(payload):
@@ -167,16 +183,108 @@ def remove_metadata(torrent_hash):
         pass
 
 
-def safe_file_path(info, file_item):
-    save_path = Path(info.get("save_path") or DOWNLOAD_ROOT).resolve()
+def safe_relative_path(file_item):
     relative = Path(str(file_item.get("name") or ""))
     if relative.is_absolute() or ".." in relative.parts:
         raise ValueError("Unsafe torrent file path")
-    path = (save_path / relative).resolve()
-    root = save_path.resolve()
+    return relative
+
+
+def safe_file_path_under(root_path, relative):
+    root = Path(root_path).resolve()
+    path = (root / relative).resolve()
     if root not in path.parents and path != root:
         raise ValueError("Torrent file escaped save path")
     return path
+
+
+def candidate_file_paths(info, file_item):
+    relative = safe_relative_path(file_item)
+    candidates = []
+    roots = []
+    preferences = qbt_preferences()
+    save_path = Path(info.get("save_path") or DOWNLOAD_ROOT).resolve()
+    content_path = info.get("content_path")
+
+    roots.append(save_path)
+
+    if content_path:
+        content = Path(str(content_path)).resolve()
+        if content.suffix.lower() in VIDEO_EXTENSIONS:
+            candidates.append(content)
+        else:
+            roots.append(content)
+            if relative.parts and content.name == relative.parts[0]:
+                roots.append(content.parent)
+
+    if preferences.get("temp_path_enabled"):
+        temp_path = preferences.get("temp_path")
+        if temp_path:
+            roots.append(Path(str(temp_path)).resolve())
+
+    for root in roots:
+        try:
+            candidate = safe_file_path_under(root, relative)
+        except ValueError:
+            continue
+        candidates.append(candidate)
+        if preferences.get("incomplete_files_ext"):
+            candidates.append(candidate.with_name(candidate.name + ".!qB"))
+
+    unique = []
+    for candidate in candidates:
+        if candidate not in unique:
+            unique.append(candidate)
+    return unique
+
+
+def resolve_file_path(info, file_item):
+    for path in candidate_file_paths(info, file_item):
+        if path.exists() and path.is_file() and path.stat().st_size > 0:
+            return path
+    return None
+
+
+def safe_file_path(info, file_item):
+    return safe_file_path_under(Path(info.get("save_path") or DOWNLOAD_ROOT).resolve(), safe_relative_path(file_item))
+
+
+def prioritize_selected_file(torrent_hash, preferred_index):
+    if preferred_index is None or preferred_index == "":
+        return
+
+    selected_index = str(preferred_index)
+    files = []
+    for _ in range(12):
+        try:
+            files = torrent_files(torrent_hash)
+        except Exception:
+            files = []
+        if files:
+            break
+        time.sleep(0.5)
+
+    if not files:
+        return
+
+    all_indices = [str(item.get("index")) for item in files if item.get("index") is not None]
+    other_indices = [index for index in all_indices if index != selected_index]
+    if other_indices:
+        try:
+            qbt_post(
+                "/api/v2/torrents/filePrio",
+                data={"hash": torrent_hash, "id": "|".join(other_indices), "priority": "0"},
+            )
+        except Exception:
+            pass
+    if selected_index in all_indices:
+        try:
+            qbt_post(
+                "/api/v2/torrents/filePrio",
+                data={"hash": torrent_hash, "id": selected_index, "priority": "7"},
+            )
+        except Exception:
+            pass
 
 
 def public_base(handler):
@@ -195,8 +303,8 @@ def make_status(handler, torrent_hash, preferred_index=None, info=None):
     file_exists = False
     if file_item:
         try:
-            path = safe_file_path(info, file_item)
-            file_exists = path.exists() and path.stat().st_size > 0
+            path = resolve_file_path(info, file_item)
+            file_exists = bool(path)
         except Exception:
             file_exists = False
         if file_exists:
@@ -219,6 +327,7 @@ def make_status(handler, torrent_hash, preferred_index=None, info=None):
         "addedOn": info.get("added_on"),
         "completedOn": info.get("completion_on"),
         "savePath": info.get("save_path"),
+        "contentPath": info.get("content_path"),
         "file": file_item,
         "metadata": read_metadata(torrent_hash),
         "streamUrl": stream_url,
@@ -333,6 +442,7 @@ class Handler(BaseHTTPRequestHandler):
                     "paused": "false",
                 },
             )
+            prioritize_selected_file(torrent_hash, payload.get("fileIndex"))
             write_metadata(torrent_hash, metadata)
             self.send_json(202, make_status(self, torrent_hash, payload.get("fileIndex")))
         except Exception as error:
@@ -379,15 +489,16 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(404, {"error": "File not found"})
             return
         try:
-            path = safe_file_path(info, file_item)
+            path = resolve_file_path(info, file_item)
         except Exception as error:
             self.send_json(400, {"error": str(error)})
             return
-        if not path.exists():
+        if not path:
             self.send_json(409, {"error": "File is not ready yet"})
             return
-        size = path.stat().st_size
-        start, end = 0, size - 1
+        total_size = int(file_item.get("size") or path.stat().st_size)
+        available_size = path.stat().st_size
+        start, requested_end = 0, None
         range_header = self.headers.get("Range")
         if range_header:
             match = re.match(r"bytes=(\d*)-(\d*)", range_header)
@@ -395,13 +506,35 @@ class Handler(BaseHTTPRequestHandler):
                 if match.group(1):
                     start = int(match.group(1))
                 if match.group(2):
-                    end = min(size - 1, int(match.group(2)))
-        if start >= size or end < start:
+                    requested_end = int(match.group(2))
+
+        wait_started = time.time()
+        while start >= available_size and start < total_size and time.time() - wait_started < STREAM_WAIT_SECONDS:
+            time.sleep(STREAM_WAIT_INTERVAL_SECONDS)
+            try:
+                available_size = path.stat().st_size
+            except FileNotFoundError:
+                available_size = 0
+
+        if start >= available_size or start >= total_size:
             self.send_response(416)
             self.send_cors_headers()
-            self.send_header("Content-Range", f"bytes */{size}")
+            self.send_header("Content-Range", f"bytes */{total_size}")
             self.end_headers()
             return
+
+        if requested_end is None:
+            end = available_size - 1
+        else:
+            end = min(requested_end, available_size - 1, total_size - 1)
+
+        if end < start:
+            self.send_response(416)
+            self.send_cors_headers()
+            self.send_header("Content-Range", f"bytes */{total_size}")
+            self.end_headers()
+            return
+
         length = end - start + 1
         content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
         self.send_response(206 if range_header else 200)
@@ -409,7 +542,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", content_type)
         self.send_header("Accept-Ranges", "bytes")
         self.send_header("Content-Length", str(length))
-        self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+        self.send_header("Content-Range", f"bytes {start}-{end}/{total_size}")
         self.end_headers()
         with path.open("rb") as handle:
             handle.seek(start)
