@@ -39,6 +39,7 @@ const ratingsPath = path.join(dataDir, 'title.ratings.tsv.gz');
 const homeYtDlpPython = path.join(os.homedir(), '.cache', 'nuvio-yt-dlp-venv', 'bin', 'python');
 const ytDlpPython = process.env.YT_DLP_PYTHON || (fs.existsSync(homeYtDlpPython) ? homeYtDlpPython : 'python3');
 const trailerStreamCacheTtlMs = Math.max(60 * 1000, Number(process.env.TRAILER_STREAM_CACHE_TTL_MS || 10 * 60 * 1000) || 10 * 60 * 1000);
+const trailerMaxHeight = Math.max(0, Number(process.env.TRAILER_MAX_HEIGHT || 0) || 0);
 
 let catalogIndexPromise = null;
 let artworkCachePromise = null;
@@ -208,6 +209,24 @@ function getImdbApiImageUrl(image) {
   return image && image.url ? image.url : '';
 }
 
+function getPreviewImageUrl(url) {
+  const value = String(url || '');
+
+  if (!value) {
+    return '';
+  }
+
+  if (/m\.media-amazon\.com\/images\//i.test(value)) {
+    return value.replace(/(\._V1)(?:_[^.]*)?(\.[a-z0-9]+)(\?.*)?$/i, `$1_SX185$2$3`);
+  }
+
+  if (/image\.tmdb\.org\/t\/p\/w\d+\//i.test(value)) {
+    return value.replace(/\/w\d+\//i, '/w185/');
+  }
+
+  return value;
+}
+
 function getImdbApiBackgroundUrl(title) {
   return getImdbApiImageUrl(title && title.primaryImage);
 }
@@ -251,6 +270,7 @@ function toMeta(entry, artwork) {
     type: entry.type,
     name: entry.name,
     poster: art.poster || getDefaultPosterUrl(entry),
+    posterPreview: getPreviewImageUrl(art.poster) || art.poster || getDefaultPosterUrl(entry),
     background: art.background || getDefaultBackgroundUrl(entry),
     logo: art.logo || getDefaultLogoUrl(entry),
     description: art.description || '',
@@ -270,6 +290,7 @@ function imdbApiTitleToMeta(title, fallbackEntry) {
   const rating = getImdbApiRating(title);
   const votes = getImdbApiVoteCount(title);
   const poster = getImdbApiImageUrl(title && title.primaryImage);
+  const posterPreview = getPreviewImageUrl(poster);
   const background = getImdbApiBackgroundUrl(title);
   const year = title && title.startYear ? String(title.startYear) : entry.year;
   const genres = getImdbApiGenres(title, entry);
@@ -280,6 +301,7 @@ function imdbApiTitleToMeta(title, fallbackEntry) {
     type: entry.type,
     name: title && title.primaryTitle || entry.name,
     poster: poster || getDefaultPosterUrl(entry),
+    posterPreview: posterPreview || poster || getDefaultPosterUrl(entry),
     background: background || poster || getDefaultBackgroundUrl(entry),
     logo: entry.logo || getDefaultLogoUrl(entry),
     description: title && title.plot || '',
@@ -695,6 +717,7 @@ function normalizeTmdbMovieToMeta(movie, details, indexEntry) {
   const releaseDate = details && details.release_date || movie && movie.release_date || '';
   const year = releaseDate ? String(releaseDate).slice(0, 4) : entry.year || '';
   const poster = tmdbImageUrl(details && details.poster_path || movie && movie.poster_path, 'w342');
+  const posterPreview = tmdbImageUrl(details && details.poster_path || movie && movie.poster_path, 'w185');
   const background = tmdbImageUrl(details && details.backdrop_path || movie && movie.backdrop_path, 'w1280');
   const genres = getTmdbMovieGenres(movie, details);
 
@@ -708,6 +731,7 @@ function normalizeTmdbMovieToMeta(movie, details, indexEntry) {
     type: 'movie',
     name: details && details.title || movie && movie.title || entry.name,
     poster: poster || getDefaultPosterUrl(entry),
+    posterPreview: posterPreview || poster || getDefaultPosterUrl(entry),
     background: background || poster || getDefaultBackgroundUrl(entry),
     logo: getDefaultLogoUrl(entry),
     description: details && details.overview || movie && movie.overview || '',
@@ -1391,7 +1415,7 @@ function selectProgressiveTrailerFormat(info) {
 
     return format.url
       && (!protocol || protocol.indexOf('http') === 0)
-      && (!height || height <= 1080)
+      && (!trailerMaxHeight || !height || height <= trailerMaxHeight)
       && ext === 'mp4'
       && acodec && acodec !== 'none'
       && vcodec && vcodec !== 'none';
@@ -1432,7 +1456,9 @@ function resolveYoutubeTrailerStream(key) {
       '--no-playlist',
       '--no-warnings',
       '--format',
-      'best[ext=mp4][vcodec!=none][acodec!=none][height<=1080]/best[vcodec!=none][acodec!=none][height<=1080]',
+      trailerMaxHeight
+        ? `best[ext=mp4][vcodec!=none][acodec!=none][height<=${trailerMaxHeight}]/best[vcodec!=none][acodec!=none][height<=${trailerMaxHeight}]`
+        : 'best[ext=mp4][vcodec!=none][acodec!=none]/best[vcodec!=none][acodec!=none]',
       watchUrl
     ], {
       timeout: 30000,

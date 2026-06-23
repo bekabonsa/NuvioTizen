@@ -8,6 +8,7 @@ var TV_LOGIN_REDIRECT_BASE_URL = 'https://nuvioapp.space/tv-login';
 var AUDIO_TRANSCODER_BASE_URL = 'http://10.0.0.10:8787';
 var IMDB_CATALOG_API_BASE_URL = 'http://10.0.0.10:8791';
 var IMDB_API_BASE_URL = 'https://api.imdbapi.dev';
+var TRAILER_DIRECT_STREAM_ENABLED = true;
 var TORRENT_BRIDGE_BASE_URL = '';
 var TORRENT_BRIDGE_TOKEN = '';
 var STORAGE_AUTH = 'nuvio.accessToken';

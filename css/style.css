@@ -294,6 +294,16 @@ body.is-player-fullscreen .app-frame {
     animation: view-fade-in 180ms ease;
 }
 
+body[data-current-view="player"] .view-player.is-active,
+body[data-current-view="player"] #playerLayout,
+body[data-current-view="player"] #playerStageCard,
+body[data-current-view="player"] #videoFrameFocus {
+    animation: none;
+    transform: none;
+    transition: none;
+    backface-visibility: visible;
+}
+
 @keyframes view-fade-in {
     from {
         opacity: 0;

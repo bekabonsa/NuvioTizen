@@ -283,8 +283,12 @@ function createCard(item, kind) {
     var progress;
     var mediaStack;
     var progressRail;
-    var imageUrl = options.imageUrl || item.poster;
-    var fallbackImageUrl = options.fallbackImageUrl || (imageUrl !== item.background ? item.background : '');
+    var imageUrl = options.imageUrl || item.posterPreview || item.poster;
+    var fallbackImageUrl = Object.prototype.hasOwnProperty.call(options, 'fallbackImageUrl')
+        ? options.fallbackImageUrl
+        : (item.posterPreview && imageUrl === item.posterPreview && item.poster && item.poster !== item.posterPreview
+            ? item.poster
+            : (imageUrl !== item.background ? item.background : ''));
 
     card.className = 'card';
     if (options.className) {

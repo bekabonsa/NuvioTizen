@@ -1161,21 +1161,75 @@ function getDetailTrailerKey(type, id) {
     return normalizeAddonType(type) + ':' + String(id || '');
 }
 
-function normalizeDetailTrailerPayload(payload) {
-    var trailer = payload && payload.trailer ? payload.trailer : payload;
-
-    if (!trailer || (!trailer.key && !trailer.url)) {
+function buildYoutubeTrailerPayload(key, name, type) {
+    if (!key) {
         return null;
     }
 
-    return trailer;
+    return {
+        key: String(key),
+        name: name || 'Trailer',
+        type: type || 'Trailer',
+        site: 'YouTube'
+    };
+}
+
+function normalizeDetailTrailerPayload(payload) {
+    var meta = payload && payload.meta ? payload.meta : payload;
+    var trailer = payload && payload.trailer ? payload.trailer : payload;
+    var streamTrailer;
+    var trailerEntry;
+
+    if (!trailer || (!trailer.key && !trailer.url)) {
+        trailer = null;
+    }
+
+    if (trailer) {
+        return trailer;
+    }
+
+    streamTrailer = Array.isArray(meta && meta.trailerStreams)
+        ? meta.trailerStreams.filter(function(item) {
+            return item && item.ytId;
+        })[0]
+        : null;
+    if (streamTrailer) {
+        return buildYoutubeTrailerPayload(streamTrailer.ytId, streamTrailer.title || meta.name || 'Trailer', 'Trailer');
+    }
+
+    trailerEntry = Array.isArray(meta && meta.trailers)
+        ? meta.trailers.filter(function(item) {
+            return item && item.source;
+        })[0]
+        : null;
+    if (trailerEntry) {
+        return buildYoutubeTrailerPayload(trailerEntry.source, meta && meta.name || 'Trailer', trailerEntry.type || 'Trailer');
+    }
+
+    return null;
+}
+
+function getSelectedItemTrailerFallback() {
+    return normalizeDetailTrailerPayload(state.selectedItem);
+}
+
+function requestAddonTrailer(type, id) {
+    if (!id || typeof fetchMetaFromAddons !== 'function') {
+        return Promise.resolve(null);
+    }
+
+    return fetchMetaFromAddons(type, id).then(function(meta) {
+        return normalizeDetailTrailerPayload(meta);
+    }).catch(function() {
+        return null;
+    });
 }
 
 function requestDetailTrailer(type, id) {
     var baseUrl = getImdbCatalogApiBaseUrl();
     var key = getDetailTrailerKey(type, id);
 
-    if (!baseUrl || !id) {
+    if (!id) {
         return Promise.resolve(null);
     }
     if (Object.prototype.hasOwnProperty.call(detailTrailerCache, key)) {
@@ -1185,7 +1239,7 @@ function requestDetailTrailer(type, id) {
         return detailTrailerPending[key];
     }
 
-    detailTrailerPending[key] = scheduleRequest('meta', function() {
+    detailTrailerPending[key] = (baseUrl ? scheduleRequest('meta', function() {
         return requestJson(
             baseUrl
                 + '/trailer/'
@@ -1195,7 +1249,16 @@ function requestDetailTrailer(type, id) {
             'GET'
         );
     }).then(function(payload) {
-        detailTrailerCache[key] = normalizeDetailTrailerPayload(payload);
+        return normalizeDetailTrailerPayload(payload);
+    }).catch(function() {
+        return null;
+    }) : Promise.resolve(null)).then(function(trailer) {
+        if (trailer) {
+            return trailer;
+        }
+        return requestAddonTrailer(type, id);
+    }).then(function(trailer) {
+        detailTrailerCache[key] = trailer || null;
         delete detailTrailerPending[key];
         return detailTrailerCache[key];
     }).catch(function(error) {
@@ -1243,6 +1306,9 @@ function requestDetailTrailerVideoStream(trailer) {
     var key = getYouTubeKeyFromTrailer(trailer);
     var helperBaseUrl = getImdbCatalogApiBaseUrl();
 
+    if (typeof TRAILER_DIRECT_STREAM_ENABLED !== 'undefined' && !TRAILER_DIRECT_STREAM_ENABLED) {
+        return Promise.reject(new Error('Direct trailer stream is disabled.'));
+    }
     if (!key || !helperBaseUrl) {
         return Promise.reject(new Error('No trailer stream resolver is configured.'));
     }
@@ -1551,9 +1617,8 @@ function startDetailTrailerVideo(payload) {
         renderDetailTrailerUi();
     };
     video.onended = function() {
-        state.detailTrailerPlaying = false;
         readDetailTrailerVideoMetrics();
-        renderDetailTrailerUi();
+        closeDetailTrailer();
     };
     video.onerror = function() {
         if (!state.detailTrailerFallbackAttempted && state.detailTrailerEmbedUrl) {
@@ -1719,6 +1784,10 @@ function handleDetailTrailerMessage(event) {
         state.detailTrailerDurationSeconds = info.duration;
     }
     if (typeof info.playerState === 'number') {
+        if (info.playerState === 0) {
+            closeDetailTrailer();
+            return;
+        }
         state.detailTrailerPlaying = info.playerState === 1;
     }
     renderDetailTrailerUi();
@@ -1726,7 +1795,7 @@ function handleDetailTrailerMessage(event) {
 
 function loadTrailerForSelection(type, id) {
     var requestKey = getDetailTrailerKey(type, id);
-    var itemTrailer = normalizeDetailTrailerPayload(state.selectedItem && state.selectedItem.trailer);
+    var itemTrailer = getSelectedItemTrailerFallback();
 
     state.detailTrailerRequestKey = requestKey;
     state.detailTrailerLoading = true;
@@ -1739,7 +1808,7 @@ function loadTrailerForSelection(type, id) {
             return;
         }
 
-        state.selectedTrailer = trailer || itemTrailer || null;
+        state.selectedTrailer = trailer || itemTrailer || getSelectedItemTrailerFallback() || null;
         state.detailTrailerLoading = false;
         renderDetailTrailerUi();
     }).catch(function(error) {
@@ -1749,7 +1818,7 @@ function loadTrailerForSelection(type, id) {
 
         state.detailTrailerLoading = false;
         state.detailTrailerError = error && error.message || 'Trailer request failed';
-        state.selectedTrailer = itemTrailer || null;
+        state.selectedTrailer = itemTrailer || getSelectedItemTrailerFallback() || null;
         renderDetailTrailerUi();
     });
 }
@@ -2223,11 +2292,11 @@ function startAvplayStream(url) {
             }
         });
 
-        syncAvplayRect();
+        scheduleAvplayRectSync();
         setPlayerStatus('Loading (AVPlay)');
         resetPlaybackMetrics();
         webapis.avplay.prepareAsync(function() {
-            syncAvplayRect();
+            scheduleAvplayRectSync();
             try {
                 webapis.avplay.play();
                 setPlayerStatus('Playing (AVPlay)');

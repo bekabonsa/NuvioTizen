@@ -805,8 +805,7 @@ function focusCurrent() {
         showPlayerChrome(state.mainRow > 0);
     }
     if (state.currentView === 'player' && state.playerMode === 'avplay') {
-        setTimeout(syncAvplayRect, 0);
-        setTimeout(syncAvplayRect, 90);
+        scheduleAvplayRectSync();
     }
 }
 
@@ -872,7 +871,7 @@ function setView(viewName, options) {
     }
 
     if (viewName === 'player') {
-        setTimeout(syncAvplayRect, 50);
+        scheduleAvplayRectSync();
     }
 }
 

@@ -16,6 +16,7 @@ QBT_USERNAME = os.environ.get("QBITTORRENT_USERNAME", "admin")
 QBT_PASSWORD = os.environ.get("QBITTORRENT_PASSWORD", "")
 BRIDGE_TOKEN = os.environ.get("BRIDGE_TOKEN", "")
 BRIDGE_PORT = int(os.environ.get("BRIDGE_PORT", "8788"))
+IMDB_HELPER_BASE_URL = os.environ.get("IMDB_HELPER_BASE_URL", "http://127.0.0.1:8791").rstrip("/")
 DOWNLOAD_ROOT = Path(os.environ.get("DOWNLOAD_ROOT", "/srv/torrents/downloads")).resolve()
 METADATA_ROOT = Path(os.environ.get("METADATA_ROOT", "/srv/torrents/metadata")).resolve()
 
@@ -546,10 +547,33 @@ class Handler(BaseHTTPRequestHandler):
             return {}
         return json.loads(self.rfile.read(length).decode("utf-8"))
 
+    def proxy_imdb_helper(self, parsed):
+        helper_path = parsed.path[len("/imdb"):] or "/"
+        target_url = IMDB_HELPER_BASE_URL + helper_path
+        if parsed.query:
+            target_url += "?" + parsed.query
+
+        try:
+            response = requests.get(target_url, timeout=70)
+        except Exception as error:
+            self.send_json(502, {"error": "IMDb helper unavailable", "message": str(error)})
+            return
+
+        body = response.content
+        self.send_response(response.status_code)
+        self.send_cors_headers()
+        self.send_header("Content-Type", response.headers.get("Content-Type", "application/octet-stream"))
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_GET(self):
         parsed = urlparse(self.path)
         if parsed.path == "/health":
             self.send_json(200, {"ok": True})
+            return
+        if parsed.path == "/imdb" or parsed.path.startswith("/imdb/"):
+            self.proxy_imdb_helper(parsed)
             return
         if not self.authorized():
             self.send_json(401, {"error": "Unauthorized"})

@@ -268,7 +268,7 @@ function bindPlayer() {
         setPlayerStatus('Playback error');
     });
 
-    window.addEventListener('resize', syncAvplayRect);
+    window.addEventListener('resize', scheduleAvplayRectSync);
 }
 
 function handleLeft() {

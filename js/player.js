@@ -1390,9 +1390,12 @@ function resetWindowedAvplayFrame() {
     var layout = byId('playerLayout');
     var stage = byId('playerStageCard');
     var frame = byId('videoFrameFocus');
+    var surface = byId('avplaySurface');
+    var video = byId('videoPlayer');
 
     if (layout) {
         layout.style.removeProperty('padding-top');
+        layout.style.removeProperty('transform');
     }
     if (stage) {
         stage.style.removeProperty('position');
@@ -1411,7 +1414,59 @@ function resetWindowedAvplayFrame() {
         frame.style.removeProperty('width');
         frame.style.removeProperty('height');
         frame.style.removeProperty('min-height');
+        frame.style.removeProperty('transform');
     }
+    [surface, video].forEach(function(element) {
+        if (!element) {
+            return;
+        }
+        element.style.removeProperty('width');
+        element.style.removeProperty('height');
+        element.style.removeProperty('transform');
+        element.removeAttribute('width');
+        element.removeAttribute('height');
+    });
+}
+
+function syncWindowedPlayerFrameRect() {
+    var frame = byId('videoFrameFocus');
+    var surface = byId('avplaySurface');
+    var video = byId('videoPlayer');
+    var width;
+    var height;
+
+    if (!frame || state.playerFullscreen) {
+        return;
+    }
+
+    width = Math.max(320, Math.round(frame.clientWidth || frame.offsetWidth || 0));
+    height = Math.max(180, Math.round(frame.clientHeight || frame.offsetHeight || 0));
+    if (!width || !height) {
+        return;
+    }
+
+    [frame, surface, video].forEach(function(element) {
+        if (!element) {
+            return;
+        }
+        element.style.transform = 'none';
+        element.style.width = width + 'px';
+        element.style.height = height + 'px';
+    });
+    if (surface) {
+        surface.setAttribute('width', String(width));
+        surface.setAttribute('height', String(height));
+    }
+    if (video) {
+        video.setAttribute('width', String(width));
+        video.setAttribute('height', String(height));
+    }
+}
+
+function scheduleAvplayRectSync() {
+    [0, 90, 220, 450, 900, 1500].forEach(function(delay) {
+        setTimeout(syncAvplayRect, delay);
+    });
 }
 
 function syncAvplayRect() {
@@ -1430,6 +1485,7 @@ function syncAvplayRect() {
     }
 
     resetWindowedAvplayFrame();
+    syncWindowedPlayerFrameRect();
 
     rect = (frame || surface).getBoundingClientRect();
     left = rect.left;
@@ -2097,7 +2153,7 @@ function setPlayerFullscreen(enabled) {
         pauseCurrentPlayback(false);
     }
     setTimeout(function() {
-        syncAvplayRect();
+        scheduleAvplayRectSync();
         if (nextFullscreen && wasPlaying) {
             resumeCurrentPlayback(true);
         }
