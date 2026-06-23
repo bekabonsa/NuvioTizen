@@ -1386,6 +1386,10 @@ function buildDownloadedLibraryStreamEntry(item) {
         infoHash: item.hash
     };
 
+    if (Array.isArray(item.subtitles)) {
+        raw.subtitles = item.subtitles;
+    }
+
     if (fileIndex !== null) {
         raw.fileIdx = fileIndex;
     }

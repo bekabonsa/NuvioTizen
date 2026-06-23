@@ -410,6 +410,9 @@ function updateTorrentBridgeEntry(streamEntry, job) {
         streamEntry.status = 'Playable';
         streamEntry.raw = cloneStreamRaw(streamEntry.raw) || streamEntry.raw || {};
         streamEntry.raw.url = job.streamUrl;
+        if (Array.isArray(job.subtitles)) {
+            streamEntry.raw.subtitles = job.subtitles;
+        }
         streamEntry.description = streamEntry.description || 'Torrent bridge stream is ready.';
         return;
     }

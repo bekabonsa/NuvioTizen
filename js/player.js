@@ -354,6 +354,16 @@ function isEnglishSubtitleEntry(info) {
         || isEnglishSubtitleSource(info.file);
 }
 
+function isTorrentBridgeSubtitleEntry(info) {
+    if (!info || typeof info !== 'object') {
+        return false;
+    }
+
+    return info.source === 'torrent-bridge'
+        || info.provider === 'Torrent Bridge'
+        || String(info.url || info.src || info.file || '').indexOf('/subtitle/') !== -1;
+}
+
 function isExternalSubtitleTrackId(trackId) {
     return typeof trackId === 'string' && trackId.indexOf('subtitle-ext-') === 0;
 }
@@ -617,7 +627,7 @@ function getExternalSubtitleTracks(stream) {
         if (!url) {
             return null;
         }
-        if (!isEnglishSubtitleEntry(track)) {
+        if (!isTorrentBridgeSubtitleEntry(track) && !isEnglishSubtitleEntry(track)) {
             return null;
         }
         return {
@@ -626,6 +636,8 @@ function getExternalSubtitleTracks(stream) {
             kind: 'external',
             url: resolveUrl(baseUrl, url),
             headers: getSubtitleRequestHeaders(stream, track),
+            language: language,
+            ready: track.ready !== false,
             label: normalizeTrackLabel('subtitle', {
                 language: language,
                 label: label
@@ -779,7 +791,9 @@ function getSubtitleBadgeLabel() {
 }
 
 function applyPreferredSubtitleSelection() {
-    var preferredTracks = getPreferredSubtitleTracks();
+    var preferredTracks = getPreferredSubtitleTracks().filter(function(track) {
+        return track.ready !== false;
+    });
 
     if (!preferredTracks.length) {
         return;
@@ -1583,12 +1597,6 @@ function refreshHtml5Tracks() {
         for (index = 0; index < textTracks.length; index += 1) {
             var textTrackLanguage = textTracks[index].language || '';
             var textTrackLabel = textTracks[index].label || '';
-            if (!isEnglishSubtitleEntry({
-                language: textTrackLanguage,
-                label: textTrackLabel
-            })) {
-                continue;
-            }
             nextSubs.push({
                 id: 'subtitle-' + index,
                 index: index,
@@ -1659,9 +1667,6 @@ function refreshAvplayTracks() {
         }
 
         if (trackInfo.type === 'TEXT' || trackInfo.type === 'SUBTITLE') {
-            if (!isEnglishSubtitleEntry(info)) {
-                return;
-            }
             trackId = 'subtitle-' + trackInfo.index;
             nextSubs.push({
                 id: trackId,
