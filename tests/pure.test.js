@@ -272,6 +272,82 @@ function testImdbRatingFilter() {
   sandbox.state.selectedMovieGenre = '';
 }
 
+function testBlockbusterCatalogOption() {
+  const previousApiBase = sandbox.IMDB_CATALOG_API_BASE_URL;
+  const previousMovieGenres = sandbox.state.movieGenres;
+  const previousSelectedMovieGenre = sandbox.state.selectedMovieGenre;
+  const previousSelectedMovieYear = sandbox.state.selectedMovieYear;
+  const previousSelectedMovieRating = sandbox.state.selectedMovieRating;
+
+  try {
+    sandbox.IMDB_CATALOG_API_BASE_URL = 'http://catalog.example.test';
+
+    const options = sandbox.buildCatalogOptions('movie');
+    const blockbuster = options.filter((option) => sandbox.isBlockbusterCatalogOption(option))[0];
+    const yearOption = {
+      key: 'year-2025',
+      label: '2025',
+      type: 'movie',
+      filterGroup: 'year'
+    };
+    const ratingEight = sandbox.getRatingFilterOptionsForRender('movie').filter((option) => option.label === '8')[0];
+
+    assert.ok(blockbuster);
+    assert.strictEqual(blockbuster.label, 'Blockbuster');
+    assert.strictEqual(sandbox.supportsRemoteBrowsePaging(blockbuster), true);
+
+    sandbox.state.movieGenres = [blockbuster, yearOption];
+    sandbox.state.selectedMovieGenre = blockbuster.key;
+    sandbox.state.selectedMovieYear = yearOption.key;
+    sandbox.state.selectedMovieRating = '';
+    assert.strictEqual(
+      sandbox.buildCatalogRequestUrl(blockbuster, 40, { limit: 25 }),
+      'http://catalog.example.test/catalog/movie?blockbuster=1&year=2025&skip=40&limit=25'
+    );
+
+    sandbox.state.selectedMovieRating = ratingEight.key;
+    assert.strictEqual(
+      sandbox.buildImdbCatalogApiUrl('movie', sandbox.getSelectedRatingCombinedOptions('movie'), 50, 50),
+      'http://catalog.example.test/catalog/movie?blockbuster=1&rating=8&year=2025&skip=50&limit=50'
+    );
+  } finally {
+    sandbox.IMDB_CATALOG_API_BASE_URL = previousApiBase;
+    sandbox.state.movieGenres = previousMovieGenres;
+    sandbox.state.selectedMovieGenre = previousSelectedMovieGenre;
+    sandbox.state.selectedMovieYear = previousSelectedMovieYear;
+    sandbox.state.selectedMovieRating = previousSelectedMovieRating;
+  }
+}
+
+function testDetailTrailerHelpers() {
+  const previousApiBase = sandbox.IMDB_CATALOG_API_BASE_URL;
+  const trailer = sandbox.normalizeDetailTrailerPayload({
+    trailer: {
+      site: 'YouTube',
+      key: 'abc123XYZ',
+      name: 'Official Trailer'
+    }
+  });
+
+  assert.strictEqual(trailer.key, 'abc123XYZ');
+  assert.strictEqual(sandbox.normalizeDetailTrailerPayload({ trailer: null }), null);
+  assert.strictEqual(sandbox.formatTrailerTime(65), '1:05');
+  try {
+    sandbox.IMDB_CATALOG_API_BASE_URL = '';
+    assert.strictEqual(
+      sandbox.buildDetailTrailerEmbedUrl(trailer),
+      'https://www.youtube.com/embed/abc123XYZ?enablejsapi=1&playsinline=1&rel=0&modestbranding=1&controls=0&iv_load_policy=3&autoplay=1'
+    );
+    sandbox.IMDB_CATALOG_API_BASE_URL = 'http://catalog.example.test';
+    assert.strictEqual(
+      sandbox.buildDetailTrailerEmbedUrl(trailer),
+      'http://catalog.example.test/trailer-player?key=abc123XYZ&title=Official%20Trailer'
+    );
+  } finally {
+    sandbox.IMDB_CATALOG_API_BASE_URL = previousApiBase;
+  }
+}
+
 function testTorrentBridgeHelpers() {
   const previousBaseUrl = sandbox.TORRENT_BRIDGE_BASE_URL;
   const previousToken = sandbox.TORRENT_BRIDGE_TOKEN;
@@ -744,6 +820,8 @@ function testResumeAndTranscodedTimelineHelpers() {
     testBrowseGenreFiltering,
     testYearFilterDefaultAll,
     testImdbRatingFilter,
+    testBlockbusterCatalogOption,
+    testDetailTrailerHelpers,
     testTorrentBridgeHelpers,
     testBrowseRequestVersioning,
     testMetadataFormatting,

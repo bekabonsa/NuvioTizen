@@ -954,6 +954,15 @@ function getDisplayedPlaybackTimeMs() {
 }
 
 function getSeekPreviewSpeedMultiplier(heldMs) {
+    if (heldMs >= 12000) {
+        return 1024;
+    }
+    if (heldMs >= 9000) {
+        return 512;
+    }
+    if (heldMs >= 6000) {
+        return 256;
+    }
     if (heldMs >= 5000) {
         return 128;
     }

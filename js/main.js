@@ -59,6 +59,26 @@ function bindDetailActions() {
         setAddonsMessage('Choose a title first.', 'error');
     });
 
+    byId('detailTrailerButton').addEventListener('click', function() {
+        openDetailTrailer();
+    });
+
+    byId('detailTrailerBackButton').addEventListener('click', function() {
+        seekDetailTrailerBy(-10);
+    });
+
+    byId('detailTrailerToggleButton').addEventListener('click', function() {
+        toggleDetailTrailerPlayback();
+    });
+
+    byId('detailTrailerForwardButton').addEventListener('click', function() {
+        seekDetailTrailerBy(10);
+    });
+
+    byId('detailTrailerCloseButton').addEventListener('click', function() {
+        closeDetailTrailer();
+    });
+
     byId('detailEpisodesButton').addEventListener('click', function() {
         if (state.selectedType !== 'series') {
             return;

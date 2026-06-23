@@ -563,7 +563,7 @@ function getEpisodeBrowserRowCount() {
 }
 
 function getVisibleDetailActionRowCount() {
-    return queryAll('#detailActions .action-button').some(function(button) {
+    return queryAll('#detailActions .action-button, #detailTrailerControls .action-button').some(function(button) {
         return isVisibleControl(button);
     }) ? 1 : 0;
 }
@@ -924,9 +924,12 @@ function renderSeasonRail() {
 
 function renderStreamList() {
     var list = byId('streamList');
+    var streamCount = byId('streamCount');
     var fragment = document.createDocumentFragment();
 
-    byId('streamCount').textContent = String(state.streams.length);
+    if (streamCount) {
+        streamCount.textContent = String(state.streams.length);
+    }
     list.innerHTML = '';
 
     if (!state.streams.length) {
@@ -1154,6 +1157,612 @@ function requestImdbApiCredits(id) {
     return imdbApiCreditsPending[key];
 }
 
+function getDetailTrailerKey(type, id) {
+    return normalizeAddonType(type) + ':' + String(id || '');
+}
+
+function normalizeDetailTrailerPayload(payload) {
+    var trailer = payload && payload.trailer ? payload.trailer : payload;
+
+    if (!trailer || (!trailer.key && !trailer.url)) {
+        return null;
+    }
+
+    return trailer;
+}
+
+function requestDetailTrailer(type, id) {
+    var baseUrl = getImdbCatalogApiBaseUrl();
+    var key = getDetailTrailerKey(type, id);
+
+    if (!baseUrl || !id) {
+        return Promise.resolve(null);
+    }
+    if (Object.prototype.hasOwnProperty.call(detailTrailerCache, key)) {
+        return Promise.resolve(detailTrailerCache[key]);
+    }
+    if (detailTrailerPending[key]) {
+        return detailTrailerPending[key];
+    }
+
+    detailTrailerPending[key] = scheduleRequest('meta', function() {
+        return requestJson(
+            baseUrl
+                + '/trailer/'
+                + encodeURIComponent(normalizeAddonType(type))
+                + '/'
+                + encodeURIComponent(String(id)),
+            'GET'
+        );
+    }).then(function(payload) {
+        detailTrailerCache[key] = normalizeDetailTrailerPayload(payload);
+        delete detailTrailerPending[key];
+        return detailTrailerCache[key];
+    }).catch(function(error) {
+        delete detailTrailerPending[key];
+        throw error;
+    });
+
+    return detailTrailerPending[key];
+}
+
+function getYouTubeKeyFromTrailer(trailer) {
+    var match;
+    var value = trailer && (trailer.key || trailer.url || trailer.webUrl) || '';
+
+    if (trailer && trailer.key) {
+        return String(trailer.key);
+    }
+
+    match = String(value).match(/(?:youtube\.com\/(?:watch\?v=|embed\/)|youtu\.be\/)([A-Za-z0-9_-]{6,})/);
+    return match ? match[1] : '';
+}
+
+function buildDetailTrailerEmbedUrl(trailer) {
+    var key = getYouTubeKeyFromTrailer(trailer);
+    var helperBaseUrl = getImdbCatalogApiBaseUrl();
+    var title = trailer && trailer.name || 'Trailer';
+
+    if (!key) {
+        return trailer && trailer.url || '';
+    }
+    if (helperBaseUrl) {
+        return helperBaseUrl
+            + '/trailer-player?key='
+            + encodeURIComponent(key)
+            + '&title='
+            + encodeURIComponent(title);
+    }
+
+    return 'https://www.youtube.com/embed/'
+        + encodeURIComponent(key)
+        + '?enablejsapi=1&playsinline=1&rel=0&modestbranding=1&controls=0&iv_load_policy=3&autoplay=1';
+}
+
+function requestDetailTrailerVideoStream(trailer) {
+    var key = getYouTubeKeyFromTrailer(trailer);
+    var helperBaseUrl = getImdbCatalogApiBaseUrl();
+
+    if (!key || !helperBaseUrl) {
+        return Promise.reject(new Error('No trailer stream resolver is configured.'));
+    }
+
+    return requestJson(
+        helperBaseUrl + '/trailer-stream?key=' + encodeURIComponent(key),
+        'GET'
+    );
+}
+
+function formatTrailerTime(seconds) {
+    var total = Math.max(0, Math.floor(Number(seconds || 0)));
+    var minutes = Math.floor(total / 60);
+    var remainder = total % 60;
+
+    return minutes + ':' + (remainder < 10 ? '0' : '') + remainder;
+}
+
+function syncDetailTrailerFrameRect() {
+    var artwork = byId('detailArtwork');
+    var stage = byId('detailTrailerStage');
+    var frame = byId('detailTrailerFrame');
+    var video = byId('detailTrailerVideo');
+    var rect;
+    var width;
+    var height;
+
+    if (!state.detailTrailerActive || !artwork || !stage) {
+        return;
+    }
+
+    width = artwork.clientWidth || 0;
+    height = artwork.clientHeight || 0;
+    if ((!width || !height) && artwork.getBoundingClientRect) {
+        rect = artwork.getBoundingClientRect();
+        width = rect && rect.width || width;
+        height = rect && rect.height || height;
+    }
+
+    width = Math.max(320, Math.round(width || 1280));
+    height = Math.max(180, Math.round(height || 720));
+
+    [stage, frame, video].forEach(function(element) {
+        if (!element) {
+            return;
+        }
+        element.style.top = '0px';
+        element.style.left = '0px';
+        element.style.right = 'auto';
+        element.style.bottom = 'auto';
+        element.style.width = width + 'px';
+        element.style.height = height + 'px';
+    });
+    if (frame) {
+        frame.setAttribute('width', String(width));
+        frame.setAttribute('height', String(height));
+    }
+    if (video) {
+        video.setAttribute('width', String(width));
+        video.setAttribute('height', String(height));
+    }
+}
+
+function scheduleDetailTrailerFrameSync() {
+    syncDetailTrailerFrameRect();
+    if (state.detailTrailerSyncTimer) {
+        clearTimeout(state.detailTrailerSyncTimer);
+    }
+    state.detailTrailerSyncTimer = setTimeout(function() {
+        state.detailTrailerSyncTimer = null;
+        syncDetailTrailerFrameRect();
+    }, 140);
+    setTimeout(syncDetailTrailerFrameRect, 420);
+}
+
+function renderDetailTrailerUi() {
+    var button = byId('detailTrailerButton');
+    var stage = byId('detailTrailerStage');
+    var toggleButton = byId('detailTrailerToggleButton');
+    var toggleGlyph = byId('detailTrailerToggleGlyph');
+    var caption = byId('detailTrailerCaption');
+    var hasSelection = !!state.selectedItem;
+    var hasTrailer = !!state.selectedTrailer;
+    var pending = !!state.detailTrailerLoading;
+    var resolving = !!state.detailTrailerResolving;
+    var title = state.selectedTrailer && state.selectedTrailer.name || 'Trailer';
+    var timeText = state.detailTrailerDurationSeconds
+        ? formatTrailerTime(state.detailTrailerCurrentSeconds) + ' / ' + formatTrailerTime(state.detailTrailerDurationSeconds)
+        : '';
+
+    if (button) {
+        button.style.display = hasSelection ? '' : 'none';
+        button.disabled = !hasSelection || pending || !hasTrailer;
+        button.textContent = pending ? 'Trailer' : hasTrailer ? 'Trailer' : 'No Trailer';
+        button.classList.toggle('is-loading', pending);
+        button.setAttribute('aria-busy', pending ? 'true' : 'false');
+        button.setAttribute('aria-disabled', button.disabled ? 'true' : 'false');
+    }
+    if (stage) {
+        stage.hidden = !state.detailTrailerActive;
+    }
+    if (toggleButton) {
+        toggleButton.setAttribute('aria-label', state.detailTrailerPlaying ? 'Pause trailer' : 'Play trailer');
+        toggleButton.setAttribute('title', state.detailTrailerPlaying ? 'Pause trailer' : 'Play trailer');
+        toggleButton.setAttribute('data-state', state.detailTrailerPlaying ? 'pause' : 'play');
+    }
+    if (toggleGlyph) {
+        toggleGlyph.textContent = state.detailTrailerPlaying ? '❚❚' : '▶';
+    }
+    if (caption) {
+        caption.textContent = resolving
+            ? title + ' • Loading...'
+            : (timeText ? title + ' • ' + timeText : title);
+    }
+
+    markFocusRegistryDirty();
+}
+
+function readDetailTrailerVideoMetrics() {
+    var video = byId('detailTrailerVideo');
+
+    if (!video || state.detailTrailerMode !== 'video') {
+        return;
+    }
+
+    if (typeof video.currentTime === 'number' && isFinite(video.currentTime)) {
+        state.detailTrailerCurrentSeconds = video.currentTime;
+    }
+    if (typeof video.duration === 'number' && isFinite(video.duration) && video.duration > 0) {
+        state.detailTrailerDurationSeconds = video.duration;
+    }
+    state.detailTrailerPlaying = !video.paused && !video.ended;
+}
+
+function sendDetailTrailerCommand(command, args) {
+    var frame = byId('detailTrailerFrame');
+
+    if (!frame || !frame.contentWindow || !command) {
+        return;
+    }
+
+    frame.contentWindow.postMessage(JSON.stringify({
+        event: 'command',
+        func: command,
+        args: args || []
+    }), '*');
+}
+
+function stopDetailTrailerTimer() {
+    if (state.detailTrailerTimer) {
+        clearInterval(state.detailTrailerTimer);
+        state.detailTrailerTimer = null;
+    }
+}
+
+function startDetailTrailerTimer() {
+    stopDetailTrailerTimer();
+    state.detailTrailerTimer = setInterval(function() {
+        if (state.detailTrailerMode === 'video') {
+            readDetailTrailerVideoMetrics();
+            renderDetailTrailerUi();
+            return;
+        }
+
+        sendDetailTrailerCommand('getCurrentTime');
+        sendDetailTrailerCommand('getDuration');
+    }, 1000);
+}
+
+function resetDetailTrailerSurfaces() {
+    var frame = byId('detailTrailerFrame');
+    var video = byId('detailTrailerVideo');
+
+    if (frame) {
+        frame.classList.add('is-hidden');
+        frame.removeAttribute('src');
+    }
+    if (video) {
+        try {
+            video.pause();
+        } catch (error) {
+            // no-op
+        }
+        video.classList.add('is-hidden');
+        video.removeAttribute('src');
+        try {
+            video.load();
+        } catch (loadError) {
+            // no-op
+        }
+    }
+}
+
+function closeDetailTrailer() {
+    stopDetailTrailerTimer();
+    if (state.detailTrailerSyncTimer) {
+        clearTimeout(state.detailTrailerSyncTimer);
+        state.detailTrailerSyncTimer = null;
+    }
+    state.detailTrailerActive = false;
+    state.detailTrailerPlaying = false;
+    state.detailTrailerLoaded = false;
+    state.detailTrailerResolving = false;
+    state.detailTrailerMode = '';
+    state.detailTrailerEmbedUrl = '';
+    state.detailTrailerFallbackAttempted = false;
+    state.detailTrailerCurrentSeconds = 0;
+    state.detailTrailerDurationSeconds = 0;
+    resetDetailTrailerSurfaces();
+    renderDetailTrailerUi();
+    if (state.currentView === 'addons' && typeof focusCurrent === 'function') {
+        setTimeout(focusCurrent, 0);
+    }
+}
+
+function resetDetailTrailerState(clearTrailer) {
+    closeDetailTrailer();
+    state.detailTrailerRequestKey = '';
+    state.detailTrailerLoading = false;
+    state.detailTrailerError = '';
+    if (clearTrailer) {
+        state.selectedTrailer = null;
+    }
+    renderDetailTrailerUi();
+}
+
+function startDetailTrailerIframe(src) {
+    var frame = byId('detailTrailerFrame');
+    var video = byId('detailTrailerVideo');
+
+    state.detailTrailerMode = 'iframe';
+    state.detailTrailerPlaying = true;
+    state.detailTrailerLoaded = false;
+    state.detailTrailerResolving = false;
+    if (video) {
+        video.classList.add('is-hidden');
+        try {
+            video.pause();
+        } catch (error) {
+            // no-op
+        }
+        video.removeAttribute('src');
+    }
+    renderDetailTrailerUi();
+    scheduleDetailTrailerFrameSync();
+    if (frame) {
+        frame.classList.remove('is-hidden');
+        frame.setAttribute('frameborder', '0');
+        frame.setAttribute('scrolling', 'no');
+        frame.onload = function() {
+            state.detailTrailerLoaded = true;
+            scheduleDetailTrailerFrameSync();
+            sendDetailTrailerCommand('playVideo');
+            startDetailTrailerTimer();
+            renderDetailTrailerUi();
+        };
+        if (frame.getAttribute('src') !== src) {
+            frame.setAttribute('src', src);
+        }
+    }
+    startDetailTrailerTimer();
+    setTimeout(function() {
+        scheduleDetailTrailerFrameSync();
+        sendDetailTrailerCommand('playVideo');
+    }, 350);
+}
+
+function startDetailTrailerVideo(payload) {
+    var frame = byId('detailTrailerFrame');
+    var video = byId('detailTrailerVideo');
+    var playPromise;
+
+    if (!video || !payload || !payload.url) {
+        startDetailTrailerIframe(state.detailTrailerEmbedUrl);
+        return;
+    }
+
+    stopDetailTrailerTimer();
+    if (frame) {
+        frame.classList.add('is-hidden');
+        frame.removeAttribute('src');
+    }
+    state.detailTrailerMode = 'video';
+    state.detailTrailerPlaying = true;
+    state.detailTrailerLoaded = false;
+    state.detailTrailerResolving = false;
+    state.detailTrailerDurationSeconds = Number(payload.duration || 0) || 0;
+    state.detailTrailerCurrentSeconds = 0;
+    video.classList.remove('is-hidden');
+    video.onloadedmetadata = function() {
+        state.detailTrailerLoaded = true;
+        readDetailTrailerVideoMetrics();
+        renderDetailTrailerUi();
+    };
+    video.ontimeupdate = function() {
+        readDetailTrailerVideoMetrics();
+        renderDetailTrailerUi();
+    };
+    video.onplay = function() {
+        state.detailTrailerPlaying = true;
+        renderDetailTrailerUi();
+    };
+    video.onpause = function() {
+        state.detailTrailerPlaying = false;
+        readDetailTrailerVideoMetrics();
+        renderDetailTrailerUi();
+    };
+    video.onended = function() {
+        state.detailTrailerPlaying = false;
+        readDetailTrailerVideoMetrics();
+        renderDetailTrailerUi();
+    };
+    video.onerror = function() {
+        if (!state.detailTrailerFallbackAttempted && state.detailTrailerEmbedUrl) {
+            state.detailTrailerFallbackAttempted = true;
+            startDetailTrailerIframe(state.detailTrailerEmbedUrl);
+            return;
+        }
+        state.detailTrailerPlaying = false;
+        state.detailTrailerResolving = false;
+        setAddonsMessage('Trailer playback failed.', 'error');
+        renderDetailTrailerUi();
+    };
+    if (video.getAttribute('src') !== payload.url) {
+        video.setAttribute('src', payload.url);
+        video.load();
+    }
+    scheduleDetailTrailerFrameSync();
+    renderDetailTrailerUi();
+    startDetailTrailerTimer();
+    playPromise = video.play();
+    if (playPromise && typeof playPromise.then === 'function') {
+        playPromise.then(function() {
+            state.detailTrailerPlaying = true;
+            readDetailTrailerVideoMetrics();
+            renderDetailTrailerUi();
+        }).catch(function() {
+            if (!state.detailTrailerFallbackAttempted && state.detailTrailerEmbedUrl) {
+                state.detailTrailerFallbackAttempted = true;
+                startDetailTrailerIframe(state.detailTrailerEmbedUrl);
+            }
+        });
+    }
+}
+
+function openDetailTrailer() {
+    var src;
+
+    if (!state.selectedTrailer) {
+        setAddonsMessage(state.detailTrailerLoading ? 'Loading trailer...' : 'No trailer was found for this title.', 'error');
+        return;
+    }
+
+    src = buildDetailTrailerEmbedUrl(state.selectedTrailer);
+    if (!src) {
+        setAddonsMessage('This trailer cannot be played here.', 'error');
+        return;
+    }
+
+    stopDetailTrailerTimer();
+    resetDetailTrailerSurfaces();
+    state.detailTrailerActive = true;
+    state.detailTrailerPlaying = false;
+    state.detailTrailerLoaded = false;
+    state.detailTrailerResolving = true;
+    state.detailTrailerMode = '';
+    state.detailTrailerEmbedUrl = src;
+    state.detailTrailerFallbackAttempted = false;
+    state.detailTrailerCurrentSeconds = 0;
+    state.detailTrailerDurationSeconds = 0;
+    renderDetailTrailerUi();
+    scheduleDetailTrailerFrameSync();
+
+    requestDetailTrailerVideoStream(state.selectedTrailer).then(function(payload) {
+        if (!state.detailTrailerActive || state.detailTrailerEmbedUrl !== src) {
+            return;
+        }
+        startDetailTrailerVideo(payload);
+    }).catch(function() {
+        if (!state.detailTrailerActive || state.detailTrailerEmbedUrl !== src) {
+            return;
+        }
+        startDetailTrailerIframe(src);
+    });
+}
+
+function toggleDetailTrailerPlayback() {
+    var video = byId('detailTrailerVideo');
+    var playPromise;
+
+    if (!state.detailTrailerActive) {
+        openDetailTrailer();
+        return;
+    }
+    if (state.detailTrailerMode === 'video' && video) {
+        if (!video.paused && !video.ended) {
+            video.pause();
+            state.detailTrailerPlaying = false;
+            renderDetailTrailerUi();
+            return;
+        }
+        playPromise = video.play();
+        state.detailTrailerPlaying = true;
+        renderDetailTrailerUi();
+        if (playPromise && typeof playPromise.catch === 'function') {
+            playPromise.catch(function() {
+                state.detailTrailerPlaying = false;
+                renderDetailTrailerUi();
+            });
+        }
+        return;
+    }
+
+    if (state.detailTrailerPlaying) {
+        sendDetailTrailerCommand('pauseVideo');
+        state.detailTrailerPlaying = false;
+    } else {
+        sendDetailTrailerCommand('playVideo');
+        state.detailTrailerPlaying = true;
+    }
+    renderDetailTrailerUi();
+}
+
+function seekDetailTrailerBy(seconds) {
+    var nextTime;
+    var video = byId('detailTrailerVideo');
+
+    if (!state.detailTrailerActive) {
+        return;
+    }
+
+    nextTime = Math.max(0, Number(state.detailTrailerCurrentSeconds || 0) + Number(seconds || 0));
+    if (state.detailTrailerDurationSeconds) {
+        nextTime = Math.min(Number(state.detailTrailerDurationSeconds), nextTime);
+    }
+    state.detailTrailerCurrentSeconds = nextTime;
+    if (state.detailTrailerMode === 'video' && video) {
+        try {
+            video.currentTime = nextTime;
+        } catch (error) {
+            // no-op
+        }
+        readDetailTrailerVideoMetrics();
+        renderDetailTrailerUi();
+        return;
+    }
+    sendDetailTrailerCommand('seekTo', [nextTime, true]);
+    renderDetailTrailerUi();
+}
+
+function handleDetailTrailerMessage(event) {
+    var data = event && event.data;
+    var info;
+
+    if (!state.detailTrailerActive || !data) {
+        return;
+    }
+    if (typeof data === 'string') {
+        try {
+            data = JSON.parse(data);
+        } catch (error) {
+            return;
+        }
+    }
+    if (!data || data.event !== 'infoDelivery') {
+        return;
+    }
+
+    info = data.info || {};
+    if (typeof info.currentTime === 'number') {
+        state.detailTrailerCurrentSeconds = info.currentTime;
+    }
+    if (typeof info.duration === 'number') {
+        state.detailTrailerDurationSeconds = info.duration;
+    }
+    if (typeof info.playerState === 'number') {
+        state.detailTrailerPlaying = info.playerState === 1;
+    }
+    renderDetailTrailerUi();
+}
+
+function loadTrailerForSelection(type, id) {
+    var requestKey = getDetailTrailerKey(type, id);
+    var itemTrailer = normalizeDetailTrailerPayload(state.selectedItem && state.selectedItem.trailer);
+
+    state.detailTrailerRequestKey = requestKey;
+    state.detailTrailerLoading = true;
+    state.detailTrailerError = '';
+    state.selectedTrailer = itemTrailer;
+    renderDetailTrailerUi();
+
+    return requestDetailTrailer(type, id).then(function(trailer) {
+        if (state.detailTrailerRequestKey !== requestKey) {
+            return;
+        }
+
+        state.selectedTrailer = trailer || itemTrailer || null;
+        state.detailTrailerLoading = false;
+        renderDetailTrailerUi();
+    }).catch(function(error) {
+        if (state.detailTrailerRequestKey !== requestKey) {
+            return;
+        }
+
+        state.detailTrailerLoading = false;
+        state.detailTrailerError = error && error.message || 'Trailer request failed';
+        state.selectedTrailer = itemTrailer || null;
+        renderDetailTrailerUi();
+    });
+}
+
+if (typeof window !== 'undefined' && window.addEventListener) {
+    window.addEventListener('message', handleDetailTrailerMessage);
+    window.addEventListener('resize', function() {
+        if (state.detailTrailerActive) {
+            scheduleDetailTrailerFrameSync();
+        }
+    });
+}
+
 function mergeImdbApiTitleIntoItem(item, title) {
     var output = {};
     var poster = getImdbApiTitleImageUrl(title);
@@ -1379,7 +1988,9 @@ function renderAddons() {
         byId('selectedTypeLabel').textContent = 'Choose a title';
         byId('selectedDescription').textContent = 'Pick a movie or show from the catalog pages to inspect addon streams here.';
         byId('selectedVideoLabel').textContent = 'No episode selected';
-        selectedTypeSummary.textContent = 'Choose a title';
+        if (selectedTypeSummary) {
+            selectedTypeSummary.textContent = 'Choose a title';
+        }
         detailPlayButton.textContent = 'Play';
         detailEpisodesButton.textContent = 'Episodes';
         detailEpisodesButton.style.display = 'none';
@@ -1395,7 +2006,9 @@ function renderAddons() {
             state.selectedItem.releaseInfo ||
             'Installed addons and streams for the current selection appear below.';
         byId('selectedVideoLabel').textContent = getSelectedItemMetaLine();
-        selectedTypeSummary.textContent = getSelectedVideoSummary();
+        if (selectedTypeSummary) {
+            selectedTypeSummary.textContent = getSelectedVideoSummary();
+        }
         detailPlayButton.textContent = state.selectedType === 'series' ? 'Play Episode' : 'Play Movie';
         detailEpisodesButton.textContent = 'More Episodes';
         detailEpisodesButton.style.display = state.selectedType === 'series' ? '' : 'none';
@@ -1408,6 +2021,7 @@ function renderAddons() {
     }
 
     updateLibraryButtonUi();
+    renderDetailTrailerUi();
     renderEpisodeBrowserForMode();
     renderStreamList();
     applyDetailMode();
@@ -1944,6 +2558,7 @@ function prepareSelection(item, type, options) {
     var resumeInPlayer = !!(options && options.resumeInPlayer);
 
     captureBrowseReturnState();
+    resetDetailTrailerState(true);
     state.selectedItem = item;
     state.selectedType = type;
     state.selectedImdbApiTitle = null;
@@ -1962,6 +2577,7 @@ function prepareSelection(item, type, options) {
     state.resumeAutoplayInPlayer = state.autoplayPending && resumeInPlayer;
     renderAddons();
     loadImdbApiSelectionDetails(type, item && item.id);
+    loadTrailerForSelection(type, item && item.id);
 
     if (state.resumeAutoplayInPlayer) {
         setResumeLookupPlayerStatus('Finding saved stream...');

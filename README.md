@@ -189,6 +189,20 @@ IMDB_MIN_VOTES=10000 IMDB_WEIGHTED_VOTE_ANCHOR=25000 node scripts/imdb-catalog-a
 
 Changing these settings automatically rebuilds the generated IMDb index.
 
+The Films page also exposes a `Blockbuster` catalog through the same helper:
+
+- With `TMDB_READ_ACCESS_TOKEN` or `TMDB_API_KEY`, `Blockbuster` uses TMDb Discover sorted by `revenue.desc`, keeps a minimum TMDb vote count, and maps results back to IMDb IDs for playback.
+- Without TMDb credentials, `Blockbuster` falls back to IMDb dataset vote-count ordering, so the tab still works but is not true revenue-ranked box office data.
+- `TMDB_BLOCKBUSTER_MIN_VOTES` defaults to `500`.
+
+Example:
+
+```sh
+TMDB_READ_ACCESS_TOKEN='<tmdb-read-access-token>' node scripts/imdb-catalog-api.js
+```
+
+Trailer playback uses TMDb videos when TMDb is configured and falls back to Cinemeta trailer metadata when it is not. The app loads trailers through the helper's `/trailer-player` wrapper so Tizen has an HTTP page/referrer for YouTube embeds.
+
 ## Runtime Notes
 
 - The app is configured as a Tizen TV widget in [`config.xml`](config.xml).

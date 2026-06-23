@@ -4,6 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
     <meta name="description" content="Nuvio TV shell with live catalogs, addons, and player" />
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
     <title>Nuvio TV</title>
     <link rel="preconnect" href="https://api.imdbapi.dev" />
     <link rel="preconnect" href="https://m.media-amazon.com" crossorigin />
@@ -265,6 +266,27 @@
                 <section class="view view-addons" data-view-panel="addons">
                     <section class="detail-hero detail-hero-spotlight content-row" id="detailHeroRow">
                         <div class="detail-backdrop" id="detailArtwork">
+                            <div class="detail-trailer-stage" id="detailTrailerStage" hidden>
+                                <video class="detail-trailer-video is-hidden" id="detailTrailerVideo" playsinline webkit-playsinline preload="metadata"></video>
+                                <iframe class="detail-trailer-frame" id="detailTrailerFrame" title="Trailer player" width="100%" height="100%" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+                                <div class="detail-trailer-controls" id="detailTrailerControls">
+                                    <button class="action-button player-icon-button detail-trailer-control" id="detailTrailerBackButton" type="button" aria-label="Back 10 seconds" title="Back 10 seconds">
+                                        <span class="player-action-glyph">↶</span>
+                                        <span class="player-action-badge">10</span>
+                                    </button>
+                                    <button class="action-button player-icon-button detail-trailer-control" id="detailTrailerToggleButton" type="button" aria-label="Play trailer" title="Play trailer">
+                                        <span class="player-action-glyph" id="detailTrailerToggleGlyph">▶</span>
+                                    </button>
+                                    <button class="action-button player-icon-button detail-trailer-control" id="detailTrailerForwardButton" type="button" aria-label="Forward 10 seconds" title="Forward 10 seconds">
+                                        <span class="player-action-glyph">↷</span>
+                                        <span class="player-action-badge">10</span>
+                                    </button>
+                                    <button class="action-button player-icon-button detail-trailer-control detail-trailer-close" id="detailTrailerCloseButton" type="button" aria-label="Close trailer" title="Close trailer">
+                                        <span class="player-action-glyph">×</span>
+                                    </button>
+                                    <span class="detail-trailer-caption" id="detailTrailerCaption">Trailer</span>
+                                </div>
+                            </div>
                             <div class="detail-art-overlay"></div>
                         </div>
                         <div class="detail-copy">
@@ -278,22 +300,9 @@
                                 <span class="section-kicker">Cast</span>
                                 <div class="detail-cast-row" id="detailCastRow"></div>
                             </section>
-                            <div class="info-grid">
-                                <div class="info-tile">
-                                    <span class="status-label">Installed addons</span>
-                                    <span class="info-value" id="addonCount">0</span>
-                                </div>
-                                <div class="info-tile">
-                                    <span class="status-label">Streams loaded</span>
-                                    <span class="info-value" id="streamCount">0</span>
-                                </div>
-                                <div class="info-tile">
-                                    <span class="status-label">Selection</span>
-                                    <span class="info-value" id="selectedTypeSummary">Choose a title</span>
-                                </div>
-                            </div>
                             <div class="action-row detail-actions" id="detailActions">
                                 <button class="action-button action-primary" id="detailPlayButton" type="button">Play</button>
+                                <button class="action-button" id="detailTrailerButton" type="button">Trailer</button>
                                 <button class="action-button" id="detailEpisodesButton" type="button">Episodes</button>
                                 <button class="action-button" id="detailSourcesButton" type="button">Sources</button>
                                 <button class="action-button detail-icon-button" id="detailLibraryButton" type="button" aria-label="Add to library" title="Add this title to your library">

@@ -71,6 +71,8 @@ var imdbApiTitleCache = {};
 var imdbApiCreditsCache = {};
 var imdbApiTitlePending = {};
 var imdbApiCreditsPending = {};
+var detailTrailerCache = {};
+var detailTrailerPending = {};
 var REQUEST_CONCURRENCY_LIMITS = {
     catalog: 2,
     meta: 2,
@@ -258,6 +260,21 @@ var state = {
     selectedImdbApiTitle: null,
     selectedCast: [],
     selectedDetailRequestKey: '',
+    selectedTrailer: null,
+    detailTrailerRequestKey: '',
+    detailTrailerLoading: false,
+    detailTrailerError: '',
+    detailTrailerActive: false,
+    detailTrailerPlaying: false,
+    detailTrailerLoaded: false,
+    detailTrailerResolving: false,
+    detailTrailerMode: '',
+    detailTrailerEmbedUrl: '',
+    detailTrailerFallbackAttempted: false,
+    detailTrailerCurrentSeconds: 0,
+    detailTrailerDurationSeconds: 0,
+    detailTrailerTimer: null,
+    detailTrailerSyncTimer: null,
     allSeriesVideos: [],
     availableSeasons: [],
     selectedSeason: null,

@@ -299,14 +299,17 @@ function buildMainRows() {
     if (state.currentView === 'addons') {
         var addonRows = [];
         var detailActions = queryAll('#detailActions .action-button').filter(isVisibleControl);
+        var trailerActions = state.detailTrailerActive
+            ? queryAll('#detailTrailerControls .action-button').filter(isVisibleControl)
+            : [];
         var seasons = queryAll('#seasonRail .season-chip').filter(isVisibleControl);
         var episodes = queryAll('#episodeRail .episode-card').filter(isVisibleControl);
         var streams = queryAll('#streamList .stream-card').filter(isVisibleControl);
         var browserRowCount = Math.max(seasons.length, episodes.length);
         var browserRowIndex;
 
-        if (detailActions.length) {
-            addonRows.push(detailActions);
+        if (detailActions.length || trailerActions.length) {
+            addonRows.push(detailActions.concat(trailerActions));
         }
 
         for (browserRowIndex = 0; browserRowIndex < browserRowCount; browserRowIndex += 1) {
@@ -795,6 +798,9 @@ function focusCurrent() {
     rows[state.mainRow][state.mainCol].focus();
     scrollElementIntoView(rows[state.mainRow][state.mainCol]);
     updateRowEmphasis();
+    if (state.currentView === 'addons' && state.detailTrailerActive && typeof scheduleDetailTrailerFrameSync === 'function') {
+        setTimeout(scheduleDetailTrailerFrameSync, 0);
+    }
     if (state.currentView === 'player' && state.playerFullscreen) {
         showPlayerChrome(state.mainRow > 0);
     }
@@ -820,6 +826,10 @@ function setView(viewName, options) {
     if (previousView === 'player' && viewName !== 'player') {
         setPlayerFullscreen(false);
         stopCurrentPlayback();
+    }
+
+    if (previousView === 'addons' && viewName !== 'addons' && typeof closeDetailTrailer === 'function') {
+        closeDetailTrailer();
     }
 
     if (previousView !== viewName && shouldTrackHistory) {

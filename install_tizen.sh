@@ -14,6 +14,11 @@ EXCLUDES=(
     ".cache/*" ".cache"
     ".metadata/*" ".metadata"
     ".vscode/*" ".vscode"
+    ".venv/*" ".venv"
+    "venv/*" "venv"
+    "node_modules/*" "node_modules"
+    "package-lock.json"
+    "npm-debug.log"
     ".gitignore"
     "tests/*" "tests"
     "scripts/*" "scripts"
@@ -36,6 +41,7 @@ rm -rf .buildResult
 WGT="$(ls -t .buildResult/*.wgt | head -1)"
 
 unzip -p "$WGT" index.html | grep -q "downloadedLibraryPanel"
+unzip -p "$WGT" index.html | grep -q "detailTrailerStage"
 if unzip -l "$WGT" | grep -E '(^|[[:space:]])(\.git|\.cache)(/|$)'; then
     echo "Refusing to install: WGT still contains .git or .cache files." >&2
     exit 1

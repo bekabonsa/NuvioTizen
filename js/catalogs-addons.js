@@ -260,6 +260,35 @@ function mergeCatalogArgs(target, source) {
     });
 }
 
+function isBlockbusterCatalogOption(option) {
+    return !!(option
+        && option.type === 'movie'
+        && option.catalogId === 'blockbuster'
+        && option.backendCatalog === 'tmdbBlockbuster');
+}
+
+function pushBlockbusterCatalogOption(options, labelCounts, type) {
+    if (type !== 'movie' || !getImdbCatalogApiBaseUrl()) {
+        return;
+    }
+
+    labelCounts.Blockbuster = (labelCounts.Blockbuster || 0) + 1;
+    options.push({
+        key: 'nuvio::movie::blockbuster',
+        label: 'Blockbuster',
+        addonName: 'Nuvio',
+        addon: null,
+        type: 'movie',
+        catalogId: 'blockbuster',
+        extraArgs: null,
+        filterGroup: 'catalog',
+        sortRank: 2,
+        supportsSearch: false,
+        supportsSkip: true,
+        backendCatalog: 'tmdbBlockbuster'
+    });
+}
+
 function buildCatalogOptions(type) {
     var options = [];
     var labelCounts = {};
@@ -335,6 +364,8 @@ function buildCatalogOptions(type) {
         });
     });
 
+    pushBlockbusterCatalogOption(options, labelCounts, type);
+
     options.sort(function(left, right) {
         if (left.sortRank !== right.sortRank) {
             return left.sortRank - right.sortRank;
@@ -355,7 +386,8 @@ function buildCatalogOptions(type) {
             filterGroup: option.filterGroup,
             sortRank: option.sortRank,
             supportsSearch: option.supportsSearch,
-            supportsSkip: option.supportsSkip
+            supportsSkip: option.supportsSkip,
+            backendCatalog: option.backendCatalog || ''
         };
 
         if (labelCounts[option.label] > 1) {
@@ -938,6 +970,10 @@ function getBrowseRequestSkip(option, currentLength) {
 }
 
 function supportsRemoteBrowsePaging(option) {
+    if (isBlockbusterCatalogOption(option)) {
+        return true;
+    }
+
     if (isCinemetaGenreTopCatalog(option)) {
         return !!(option && option.supportsSkip);
     }
@@ -1140,11 +1176,15 @@ function buildImdbCatalogApiUrl(type, combined, skip, limit) {
     var ratingOption = combined && combined.ratingOption;
     var yearOption = combined && combined.yearOption;
     var genreLabel = combined && combined.genreLabel;
+    var baseOption = combined && combined.baseOption;
 
     if (!baseUrl || !ratingOption) {
         return '';
     }
 
+    if (isBlockbusterCatalogOption(baseOption)) {
+        params.push('blockbuster=1');
+    }
     params.push('rating=' + encodeURIComponent(String(ratingOption.label)));
     if (genreLabel) {
         params.push('genre=' + encodeURIComponent(String(genreLabel)));
@@ -1156,6 +1196,29 @@ function buildImdbCatalogApiUrl(type, combined, skip, limit) {
     params.push('limit=' + encodeURIComponent(String(Math.max(1, limit || CINEMETA_CATALOG_PAGE_SIZE))));
 
     return baseUrl + '/catalog/' + encodeURIComponent(type) + '?' + params.join('&');
+}
+
+function buildBlockbusterCatalogApiUrl(type, skip, limit) {
+    var baseUrl = getImdbCatalogApiBaseUrl();
+    var params = [];
+    var yearOption = getSelectedYearBrowseOption(type);
+    var ratingOption = getSelectedRatingBrowseOption(type);
+
+    if (!baseUrl || type !== 'movie') {
+        return '';
+    }
+
+    params.push('blockbuster=1');
+    if (yearOption && yearOption.label) {
+        params.push('year=' + encodeURIComponent(String(yearOption.label)));
+    }
+    if (ratingOption && ratingOption.label) {
+        params.push('rating=' + encodeURIComponent(String(ratingOption.label)));
+    }
+    params.push('skip=' + encodeURIComponent(String(Math.max(0, skip || 0))));
+    params.push('limit=' + encodeURIComponent(String(Math.max(1, limit || BROWSE_PAGE_SIZE))));
+
+    return baseUrl + '/catalog/movie?' + params.join('&');
 }
 
 function requestCatalogPayloadUrl(url) {
@@ -1332,7 +1395,9 @@ function fetchRatingCombinedBrowse(type, combined, currentItems, append) {
             }).slice(0, Math.max(0, targetLength - nextItems.length));
 
             pageIndex += 1;
-            nextSkip += payload && typeof payload.limit === 'number' ? payload.limit : requestLimit;
+            nextSkip = payload && typeof payload.nextSkip === 'number'
+                ? payload.nextSkip
+                : nextSkip + (payload && typeof payload.limit === 'number' ? payload.limit : requestLimit);
 
             return enrichBrowseItemsWithArtwork(type, filtered).then(function(enriched) {
                 nextItems = appendCatalogItems(nextItems, enriched, targetLength);
@@ -1400,7 +1465,8 @@ function cloneBrowseOptionWithArgs(option, label, extraArgs) {
         filterGroup: option.filterGroup,
         sortRank: option.sortRank,
         supportsSearch: option.supportsSearch,
-        supportsSkip: option.supportsSkip
+        supportsSkip: option.supportsSkip,
+        backendCatalog: option.backendCatalog || ''
     };
 }
 
@@ -1504,11 +1570,14 @@ function getNextCinemetaSeriesPageSkips(currentLength) {
 function prefetchBrowseCatalogs(type) {
     var option = getSelectedBrowseOption(type);
     var ratingCombined = getSelectedRatingCombinedOptions(type);
-    var yearCombined = getSelectedYearCombinedOptions(type);
+    var yearCombined = isBlockbusterCatalogOption(option) ? null : getSelectedYearCombinedOptions(type);
     var currentLength = getBrowseItems(type).length;
     var expansionOptions;
 
     if (!option || !getBrowseCanLoadMore(type) || getBrowseLoadingMore(type)) {
+        return;
+    }
+    if (isBlockbusterCatalogOption(option)) {
         return;
     }
 
@@ -1555,7 +1624,9 @@ function prefetchBrowseCatalogs(type) {
     }
 
     if (supportsRemoteBrowsePaging(option)) {
-        requestBrowseCatalogPayload(option, getBrowseRequestSkip(option, currentLength)).catch(function() {});
+        requestBrowseCatalogPayload(option, getBrowseRequestSkip(option, currentLength), isBlockbusterCatalogOption(option) ? {
+            limit: BROWSE_PAGE_SIZE
+        } : null).catch(function() {});
     }
 }
 
@@ -1704,6 +1775,10 @@ function buildCatalogRequestUrl(option, skip, extraArgs) {
     var baseUrl = option && option.addon ? addonBaseUrl(option.addon.transportUrl) : '';
     var args = {};
     var parts;
+
+    if (isBlockbusterCatalogOption(option)) {
+        return buildBlockbusterCatalogApiUrl(option.type, skip, extraArgs && extraArgs.limit);
+    }
 
     if (!baseUrl || !option) {
         return '';

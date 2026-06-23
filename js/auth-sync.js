@@ -1725,7 +1725,7 @@ function removeSelectedFromLibrary() {
 function fetchBrowseCatalog(type, append) {
     var option = getSelectedBrowseOption(type);
     var ratingCombined = getSelectedRatingCombinedOptions(type);
-    var yearCombined = getSelectedYearCombinedOptions(type);
+    var yearCombined = isBlockbusterCatalogOption(option) ? null : getSelectedYearCombinedOptions(type);
     var currentItems = getBrowseItems(type);
     var visibleSkip = append ? currentItems.length : 0;
     var storedSkip = append ? getBrowseSkip(type) : 0;
@@ -1867,7 +1867,9 @@ function fetchBrowseCatalog(type, append) {
 
     updateConnectionStatus('Loading ' + type + ' browse...', false, false);
 
-    return requestBrowseCatalogPayload(option, requestSkip).then(function(payload) {
+    return requestBrowseCatalogPayload(option, requestSkip, isBlockbusterCatalogOption(option) ? {
+        limit: requestLimit
+    } : null).then(function(payload) {
         if (!isBrowseRequestCurrent(type, requestId)) {
             return;
         }
@@ -1879,10 +1881,15 @@ function fetchBrowseCatalog(type, append) {
         var items = useLocalPaging ? filtered.slice(visibleSkip, visibleSkip + requestLimit) : filtered.slice(0, requestLimit);
         var nextItems = trimToFullBrowseRows(append ? uniqueCatalogItems(currentItems.concat(items)) : items);
         var remainingLocalItems = filtered.length - nextItems.length;
+        var remoteNextSkip = payload && typeof payload.nextSkip === 'number'
+            ? payload.nextSkip
+            : requestSkip + rawItems.length;
         var canLoadMore = useLocalPaging
             ? remainingLocalItems >= BROWSE_ROW_SIZE || isCinemetaSeriesTopCatalog(option)
             : supportsRemoteBrowsePaging(option) && (
-                genreFilter
+                payload && typeof payload.hasMore === 'boolean'
+                    ? payload.hasMore && rawItems.length > 0
+                    : genreFilter
                     ? rawItems.length > 0
                     : ratingFilter
                     ? rawItems.length > 0
@@ -1890,7 +1897,7 @@ function fetchBrowseCatalog(type, append) {
             );
 
         setBrowseItems(type, nextItems);
-        setBrowseSkip(type, useLocalPaging ? nextItems.length : requestSkip + rawItems.length);
+        setBrowseSkip(type, useLocalPaging ? nextItems.length : remoteNextSkip);
         setBrowseCanLoadMore(type, canLoadMore);
         if (append && nextItems.length === currentItems.length) {
             updateConnectionStatus('No more full rows are available in this catalog.', false, true);
