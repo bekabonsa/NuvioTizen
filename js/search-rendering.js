@@ -384,7 +384,7 @@ function createCard(item, kind) {
             prepareSelection(item, kind);
         });
         card.addEventListener('focus', function() {
-            if (typeof scheduleDetailTrailerPrefetch === 'function') {
+            if (!options.disableTrailerPrefetch && typeof scheduleDetailTrailerPrefetch === 'function') {
                 scheduleDetailTrailerPrefetch(kind || item.__kind, item && item.id);
             }
         });

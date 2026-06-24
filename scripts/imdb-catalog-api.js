@@ -20,7 +20,7 @@ const imdbApiBaseUrl = (process.env.IMDB_API_BASE_URL || 'https://api.imdbapi.de
 const imdbApiExcludedCountryCodes = parseCsvSet(process.env.IMDB_API_EXCLUDED_COUNTRY_CODES || 'IN');
 const imdbApiBatchConcurrency = Math.max(1, Number(process.env.IMDB_API_BATCH_CONCURRENCY || 1) || 1);
 const enrichArtwork = process.env.IMDB_ENRICH_ARTWORK === '1';
-const maxResults = Number(process.env.IMDB_MAX_RESULTS || 120);
+const maxResults = Number(process.env.IMDB_MAX_RESULTS || 250);
 const tmdbApiBaseUrl = (process.env.TMDB_API_BASE_URL || 'https://api.themoviedb.org/3').replace(/\/+$/, '');
 const tmdbImageBaseUrl = (process.env.TMDB_IMAGE_BASE_URL || 'https://image.tmdb.org/t/p').replace(/\/+$/, '');
 const tmdbReadAccessToken = process.env.TMDB_READ_ACCESS_TOKEN || process.env.TMDB_V4_READ_ACCESS_TOKEN || '';
@@ -1253,20 +1253,20 @@ async function getPagedCatalogEntries(type, filtered, skip, limit, filters) {
   let rateLimited = false;
 
   while (cursor < filtered.length && items.length < limit) {
-    const batchSize = Math.max(5, Math.min(15, limit - items.length + 5));
+    const batchSize = Math.max(10, Math.min(35, limit - items.length + 15));
     const candidates = filtered.slice(cursor, cursor + batchSize);
     const apiTitles = await getImdbApiTitles(candidates);
     let consumed = 0;
 
     candidates.some((entry) => {
+      consumed += 1;
       if (!Object.prototype.hasOwnProperty.call(apiTitles, entry.id)) {
-        return true;
+        return false;
       }
 
       const apiTitle = apiTitles[entry.id];
       const meta = apiTitle ? imdbApiTitleToMeta(apiTitle, entry) : null;
 
-      consumed += 1;
       if (
         !apiTitle
         || titleHasExcludedCountry(apiTitle)
@@ -1300,6 +1300,123 @@ async function getPagedCatalogEntries(type, filtered, skip, limit, filters) {
     nextSkip: skip + scanned,
     hasMore: cursor < filtered.length,
     rateLimited: rateLimited
+  };
+}
+
+function normalizeRelatedTitleRoot(value) {
+  let text = String(value || '').toLowerCase();
+
+  text = text.replace(/&/g, ' and ');
+  text = (text.split(/\s*[:\-–—]\s*/)[0] || text);
+  text = text.replace(/\([^)]*\)/g, ' ');
+  text = text.replace(/\b(part|chapter|volume|vol|episode|book|season)\s+[ivxlcdm\d]+$/g, ' ');
+  text = text.replace(/\b[ivxlcdm]{2,}$|\b\d+$/g, ' ');
+  text = text.replace(/[^a-z0-9]+/g, ' ');
+  text = text.replace(/^\s*(the|a|an)\s+/g, '');
+  text = text.replace(/\s+/g, ' ').trim();
+
+  return text.length >= 4 ? text : '';
+}
+
+function getYearDistanceScore(leftYear, rightYear) {
+  const left = Number(leftYear || 0) || 0;
+  const right = Number(rightYear || 0) || 0;
+
+  if (!left || !right) {
+    return 0;
+  }
+
+  return Math.max(0, 24 - Math.abs(left - right));
+}
+
+function scoreRelatedEntry(source, candidate) {
+  const sourceRoot = normalizeRelatedTitleRoot(source && source.name);
+  const candidateRoot = normalizeRelatedTitleRoot(candidate && candidate.name);
+  const sourceGenres = new Set((source && source.genres || []).map((genre) => String(genre || '').toLowerCase()));
+  const candidateGenres = candidate && candidate.genres || [];
+  let score = 0;
+
+  if (
+    sourceRoot
+    && candidateRoot
+    && (
+      sourceRoot === candidateRoot
+      || candidateRoot.startsWith(`${sourceRoot} `)
+      || sourceRoot.startsWith(`${candidateRoot} `)
+    )
+  ) {
+    score += 120;
+  }
+
+  candidateGenres.forEach((genre) => {
+    if (sourceGenres.has(String(genre || '').toLowerCase())) {
+      score += 18;
+    }
+  });
+
+  score += getYearDistanceScore(source && source.year, candidate && candidate.year);
+  if (source && source.imdbRating && candidate && candidate.imdbRating) {
+    score += Math.max(0, 16 - Math.abs(source.imdbRating - candidate.imdbRating) * 8);
+  }
+  if (candidate && candidate.votes) {
+    score += Math.min(14, Math.log10(candidate.votes) * 2);
+  }
+
+  return score;
+}
+
+async function getRelatedCatalog(index, type, id, limit) {
+  const normalizedType = normalizeType(type);
+  const source = getIndexEntry(index, normalizedType, id);
+  const candidates = [];
+  const candidateLimit = Math.max(limit * 3, 30);
+  const items = [];
+
+  if (!source) {
+    return {
+      metas: [],
+      hasMore: false,
+      source: 'related-index'
+    };
+  }
+
+  (index[normalizedType] || []).forEach((entry) => {
+    const score = entry && entry.id !== id ? scoreRelatedEntry(source, entry) : 0;
+
+    if (score > 0) {
+      candidates.push({
+        entry: entry,
+        score: score
+      });
+    }
+  });
+
+  candidates.sort((left, right) => {
+    if (right.score !== left.score) return right.score - left.score;
+    if ((right.entry.votes || 0) !== (left.entry.votes || 0)) return (right.entry.votes || 0) - (left.entry.votes || 0);
+    return String(left.entry.name).localeCompare(String(right.entry.name));
+  });
+
+  const topEntries = candidates.slice(0, candidateLimit).map((candidate) => candidate.entry);
+  const apiTitles = await getImdbApiTitles(topEntries);
+
+  for (const entry of topEntries) {
+    const apiTitle = Object.prototype.hasOwnProperty.call(apiTitles, entry.id) ? apiTitles[entry.id] : null;
+
+    if (apiTitle && titleHasExcludedCountry(apiTitle)) {
+      continue;
+    }
+    items.push(imdbApiTitleToMeta(apiTitle, entry));
+    if (items.length >= limit) {
+      break;
+    }
+  }
+
+  return {
+    metas: items,
+    hasMore: candidates.length > topEntries.length,
+    source: 'related-index',
+    total: candidates.length
   };
 }
 
@@ -1657,6 +1774,27 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET' && /^\/catalog\/(movie|series)$/.test(parsedUrl.pathname)) {
     handleCatalog(req, res, parsedUrl).catch((error) => {
+      sendJson(res, 500, { error: { message: error.message } });
+    });
+    return;
+  }
+
+  if (req.method === 'GET' && /^\/related\/(movie|series)\/[^/]+$/.test(parsedUrl.pathname)) {
+    const pathParts = parsedUrl.pathname.split('/').filter(Boolean);
+    const type = normalizeType(pathParts[1]);
+    const id = pathParts[2];
+    const limit = Math.max(1, Math.min(maxResults, Number(parsedUrl.searchParams.get('limit') || 12) || 12));
+
+    getCatalogIndex().then((index) => {
+      return getRelatedCatalog(index, type, id, limit);
+    }).then((payload) => {
+      sendJson(res, 200, Object.assign({}, payload, {
+        id: id,
+        type: type,
+        limit: limit,
+        requestedLimit: limit
+      }));
+    }).catch((error) => {
       sendJson(res, 500, { error: { message: error.message } });
     });
     return;

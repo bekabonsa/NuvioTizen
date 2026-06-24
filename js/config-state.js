@@ -52,12 +52,13 @@ var ARTWORK_PRELOAD_LIMIT = 24;
 var BROWSE_ROW_SIZE = 5;
 var BROWSE_PAGE_SIZE = 25;
 var BROWSE_LOAD_MORE_SIZE = BROWSE_PAGE_SIZE * 2;
-var BLOCKBUSTER_PAGE_SIZE = 50;
-var BLOCKBUSTER_LOAD_MORE_SIZE = 100;
+var BLOCKBUSTER_PAGE_SIZE = 60;
+var BLOCKBUSTER_LOAD_MORE_SIZE = 150;
 var CINEMETA_CATALOG_PAGE_SIZE = 50;
 var BROWSE_EXPANSION_BATCH_SIZE = 4;
 var RATING_BROWSE_SCAN_PAGE_LIMIT = 20;
 var DETAIL_CAST_LIMIT = 10;
+var DETAIL_RELATED_LIMIT = 12;
 var FORCE_AVPLAY_DEBUG = false;
 var PLAYER_SCRUB_INITIAL_NUDGE_MS = 5000;
 var PLAYER_SCRUB_TICK_MS = 50;
@@ -74,6 +75,8 @@ var imdbApiTitleCache = {};
 var imdbApiCreditsCache = {};
 var imdbApiTitlePending = {};
 var imdbApiCreditsPending = {};
+var detailRelatedCache = {};
+var detailRelatedPending = {};
 var detailTrailerCache = {};
 var detailTrailerPending = {};
 var REQUEST_CONCURRENCY_LIMITS = {
@@ -262,6 +265,9 @@ var state = {
     selectedType: null,
     selectedImdbApiTitle: null,
     selectedCast: [],
+    selectedRelatedItems: [],
+    detailRelatedLoading: false,
+    detailRelatedRequestKey: '',
     selectedDetailRequestKey: '',
     selectedTrailer: null,
     detailTrailerRequestKey: '',

@@ -1517,6 +1517,17 @@ body[data-current-view="addons"] #detailHeroRow.is-row-far {
     white-space: normal;
 }
 
+.detail-actions .action-button:focus,
+.detail-actions .action-button:hover {
+    outline: none;
+    border-color: rgba(255, 255, 255, 0.82);
+    background: rgba(255, 255, 255, 0.18);
+    box-shadow:
+        0 0 0 3px rgba(255, 255, 255, 0.92),
+        0 0 0 9px rgba(99, 145, 255, 0.32),
+        0 18px 32px rgba(0, 0, 0, 0.38);
+}
+
 .detail-actions .action-button + .action-button {
     margin-left: 8px;
 }
@@ -1525,6 +1536,17 @@ body[data-current-view="addons"] #detailHeroRow.is-row-far {
     flex: 1.35 1 0;
     background: #fff;
     color: #090a11;
+}
+
+#detailPlayButton:focus,
+#detailPlayButton:hover {
+    background: #fff;
+    color: #05060a;
+    box-shadow:
+        0 0 0 4px rgba(255, 255, 255, 0.98),
+        0 0 0 11px rgba(92, 139, 255, 0.36),
+        inset 0 0 0 2px rgba(8, 10, 18, 0.34),
+        0 22px 36px rgba(0, 0, 0, 0.42);
 }
 
 #detailTrailerButton,
@@ -1589,6 +1611,88 @@ body[data-current-view="addons"] #detailHeroRow.is-row-far {
 
 #detailLibraryButton.is-saved .detail-library-icon-saved {
     display: block;
+}
+
+.detail-related-section {
+    margin-top: 28px;
+    padding: 24px 0 34px;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    overflow: visible;
+}
+
+.detail-related-section[hidden] {
+    display: none;
+}
+
+.detail-related-header {
+    margin-bottom: 18px;
+    padding: 0 0 0 2px;
+}
+
+.detail-related-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 22px;
+    overflow-x: auto;
+    overflow-y: visible;
+    min-height: 286px;
+    padding: 0 26px 22px 0;
+    scrollbar-width: none;
+}
+
+.detail-related-row::-webkit-scrollbar {
+    display: none;
+}
+
+.detail-related-row .card {
+    flex: 0 0 calc((100% - 110px) / 6);
+    min-width: calc((100% - 110px) / 6);
+    max-width: calc((100% - 110px) / 6);
+    padding: 0;
+    transition: none;
+    will-change: auto;
+}
+
+.detail-related-row .card-media-stack {
+    transition: none;
+}
+
+.detail-related-row .poster {
+    aspect-ratio: 2 / 3;
+    height: auto;
+    border-radius: 0;
+    box-shadow: 0 16px 30px rgba(0, 0, 0, 0.24);
+}
+
+.detail-related-row .card-title {
+    margin-top: 12px;
+    font-size: 17px;
+    line-height: 1.12;
+}
+
+.detail-related-row .card-meta {
+    font-size: 12px;
+}
+
+.detail-related-row .card:focus,
+.detail-related-row .card:hover {
+    z-index: 18;
+    transform: none;
+}
+
+.detail-related-row .card:focus .poster img,
+.detail-related-row .card:hover .poster img {
+    transform: none;
+}
+
+.detail-related-row .card:focus .poster,
+.detail-related-row .card:hover .poster {
+    outline: 4px solid rgba(255, 255, 255, 0.96);
+    outline-offset: 5px;
+    box-shadow: 0 0 0 10px rgba(106, 153, 255, 0.26), 0 22px 34px rgba(0, 0, 0, 0.34);
 }
 
 .episode-browser-section {

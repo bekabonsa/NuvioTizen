@@ -2038,6 +2038,245 @@ function renderDetailCast() {
     row.appendChild(fragment);
 }
 
+function getDetailRelatedKey(type, id) {
+    return normalizeAddonType(type) + ':' + String(id || '');
+}
+
+function normalizeRelatedTitleRoot(value) {
+    var text = String(value || '').toLowerCase();
+
+    text = text.replace(/&/g, ' and ');
+    text = text.split(/\s*[:\-–—]\s*/)[0] || text;
+    text = text.replace(/\([^)]*\)/g, ' ');
+    text = text.replace(/\b(part|chapter|volume|vol|episode|book|season)\s+[ivxlcdm\d]+$/g, ' ');
+    text = text.replace(/\b[ivxlcdm]{2,}|\b\d+$/g, ' ');
+    text = text.replace(/[^a-z0-9]+/g, ' ');
+    text = text.replace(/^\s*(the|a|an)\s+/g, '');
+    text = text.replace(/\s+/g, ' ').replace(/^\s+|\s+$/g, '');
+
+    return text.length >= 4 ? text : '';
+}
+
+function scoreLocalRelatedItem(candidate, selected) {
+    var selectedRoot = normalizeRelatedTitleRoot(selected && selected.name);
+    var candidateRoot = normalizeRelatedTitleRoot(candidate && candidate.name);
+    var selectedGenres = typeof getItemGenreValues === 'function' ? getItemGenreValues(selected) : [];
+    var candidateGenres = typeof getItemGenreValues === 'function' ? getItemGenreValues(candidate) : [];
+    var selectedYear = parseInt(selected && (selected.year || selected.releaseInfo), 10) || 0;
+    var candidateYear = parseInt(candidate && (candidate.year || candidate.releaseInfo), 10) || 0;
+    var selectedRating = getItemImdbRatingNumber(selected);
+    var candidateRating = getItemImdbRatingNumber(candidate);
+    var score = 0;
+
+    if (selectedRoot && candidateRoot && (selectedRoot === candidateRoot || candidateRoot.indexOf(selectedRoot + ' ') === 0 || selectedRoot.indexOf(candidateRoot + ' ') === 0)) {
+        score += 120;
+    }
+    candidateGenres.forEach(function(genre) {
+        if (selectedGenres.some(function(value) {
+            return typeof genreValueMatchesLabel === 'function' ? genreValueMatchesLabel(value, genre) : String(value).toLowerCase() === String(genre).toLowerCase();
+        })) {
+            score += 18;
+        }
+    });
+    if (selectedYear && candidateYear) {
+        score += Math.max(0, 24 - Math.abs(selectedYear - candidateYear));
+    }
+    if (selectedRating && candidateRating) {
+        score += Math.max(0, 16 - Math.abs(selectedRating - candidateRating) * 8);
+    }
+
+    return score;
+}
+
+function getLocalRelatedCandidates(type, id, limit) {
+    var selected = state.selectedItem || {};
+    var normalizedType = normalizeAddonType(type);
+    var pools = normalizedType === 'series'
+        ? [state.seriesBrowseItems, state.series, state.searchSeries]
+        : [state.movieBrowseItems, state.movies, state.searchMovies];
+    var seen = {};
+    var candidates = [];
+
+    state.libraryItems.forEach(function(entry) {
+        if (normalizeAddonType(entry && entry.kind) === normalizedType && entry.item) {
+            pools.push([entry.item]);
+        }
+    });
+
+    pools.forEach(function(pool) {
+        (pool || []).forEach(function(item) {
+            var score;
+
+            if (!item || !item.id || item.id === id || seen[item.id]) {
+                return;
+            }
+            seen[item.id] = true;
+            score = scoreLocalRelatedItem(item, selected);
+            if (score <= 0) {
+                return;
+            }
+            candidates.push({
+                item: item,
+                score: score
+            });
+        });
+    });
+
+    return candidates.sort(function(left, right) {
+        return right.score - left.score;
+    }).slice(0, limit).map(function(candidate) {
+        var item = {};
+        Object.keys(candidate.item).forEach(function(key) {
+            item[key] = candidate.item[key];
+        });
+        item.__kind = normalizedType;
+        return item;
+    });
+}
+
+function normalizeRelatedItems(payload, type) {
+    var normalizedType = normalizeAddonType(type);
+    var items = payload && Array.isArray(payload.metas) ? payload.metas : [];
+
+    return uniqueCatalogItems(items, DETAIL_RELATED_LIMIT).map(function(item) {
+        item.__kind = normalizedType;
+        return item;
+    });
+}
+
+function requestDetailRelated(type, id) {
+    var baseUrl = getImdbCatalogApiBaseUrl();
+    var normalizedType = normalizeAddonType(type);
+    var key = getDetailRelatedKey(normalizedType, id);
+    var limit = Math.max(1, Number(DETAIL_RELATED_LIMIT || 12) || 12);
+
+    if (!id) {
+        return Promise.resolve([]);
+    }
+    if (Object.prototype.hasOwnProperty.call(detailRelatedCache, key)) {
+        return Promise.resolve(detailRelatedCache[key]);
+    }
+    if (detailRelatedPending[key]) {
+        return detailRelatedPending[key];
+    }
+
+    detailRelatedPending[key] = (baseUrl ? scheduleRequest('meta', function() {
+        return requestJson(
+            baseUrl
+                + '/related/'
+                + encodeURIComponent(normalizedType)
+                + '/'
+                + encodeURIComponent(String(id))
+                + '?limit='
+                + encodeURIComponent(String(limit)),
+            'GET'
+        );
+    }).then(function(payload) {
+        return normalizeRelatedItems(payload, normalizedType);
+    }).catch(function() {
+        return getLocalRelatedCandidates(normalizedType, id, limit);
+    }) : Promise.resolve(getLocalRelatedCandidates(normalizedType, id, limit))).then(function(items) {
+        detailRelatedCache[key] = items || [];
+        delete detailRelatedPending[key];
+        return detailRelatedCache[key];
+    }).catch(function(error) {
+        delete detailRelatedPending[key];
+        throw error;
+    });
+
+    return detailRelatedPending[key];
+}
+
+function formatRelatedMeta(item, kind) {
+    var parts = [];
+    var year = item && (item.year || item.releaseInfo);
+    var rating = getItemImdbRatingNumber(item);
+    var genre = typeof getItemGenreLabel === 'function' ? getItemGenreLabel(item, '') : '';
+
+    if (year) {
+        parts.push(String(year).slice(0, 4));
+    }
+    if (rating) {
+        parts.push('IMDb ' + (rating.toFixed ? rating.toFixed(1) : String(rating)));
+    }
+    if (genre) {
+        parts.push(genre.split(',')[0]);
+    }
+
+    return parts.join(' • ') || (kind === 'series' ? 'Series' : 'Movie');
+}
+
+function renderDetailRelated() {
+    var section = byId('detailRelatedSection');
+    var row = byId('detailRelatedRow');
+    var title = byId('detailRelatedTitle');
+    var kicker = byId('detailRelatedKicker');
+    var count = byId('detailRelatedCount');
+    var kind = normalizeAddonType(state.selectedType);
+    var items = state.selectedRelatedItems || [];
+    var fragment;
+
+    if (!section || !row) {
+        return;
+    }
+
+    row.innerHTML = '';
+    if (!state.selectedItem || state.detailMode !== 'details' || !items.length || typeof createCard !== 'function') {
+        section.hidden = true;
+        markFocusRegistryDirty();
+        return;
+    }
+
+    section.hidden = false;
+    if (kicker) {
+        kicker.textContent = 'More Like This';
+    }
+    if (title) {
+        title.textContent = kind === 'series' ? 'Related series' : 'Related films';
+    }
+    if (count) {
+        count.textContent = items.length + ' pick' + (items.length === 1 ? '' : 's');
+    }
+
+    fragment = document.createDocumentFragment();
+    items.forEach(function(item) {
+        fragment.appendChild(createCard(item, item.__kind || kind, {
+            className: 'related-card',
+            hideSynopsis: true,
+            disableTrailerPrefetch: true,
+            metaText: formatRelatedMeta(item, item.__kind || kind),
+            imageUrl: item.poster || item.posterPreview || item.background,
+            fallbackImageUrl: item.background || item.poster
+        }));
+    });
+    row.appendChild(fragment);
+    markFocusRegistryDirty();
+}
+
+function loadRelatedForSelection(type, id) {
+    var requestKey = getDetailRelatedKey(type, id);
+
+    state.detailRelatedRequestKey = requestKey;
+    state.detailRelatedLoading = true;
+    renderDetailRelated();
+
+    return requestDetailRelated(type, id).then(function(items) {
+        if (state.detailRelatedRequestKey !== requestKey) {
+            return;
+        }
+        state.selectedRelatedItems = items || [];
+        state.detailRelatedLoading = false;
+        renderDetailRelated();
+    }).catch(function() {
+        if (state.detailRelatedRequestKey !== requestKey) {
+            return;
+        }
+        state.selectedRelatedItems = [];
+        state.detailRelatedLoading = false;
+        renderDetailRelated();
+    });
+}
+
 function loadImdbApiSelectionDetails(type, id) {
     var requestKey = getImdbApiDetailKey(type, id);
 
@@ -2101,6 +2340,7 @@ function renderAddons() {
         detailEpisodesButton.setAttribute('aria-hidden', 'true');
         detailArtwork.style.backgroundImage = 'linear-gradient(180deg, rgba(9, 11, 17, 0.18), rgba(9, 11, 17, 0.42)), #0b0d14';
         renderDetailCast();
+        renderDetailRelated();
     } else {
         byId('selectedTitle').textContent = state.selectedItem.name || 'Untitled';
         byId('selectedTypeLabel').textContent = getSelectedKindLabel();
@@ -2121,6 +2361,7 @@ function renderAddons() {
             ? 'linear-gradient(180deg, rgba(9, 11, 17, 0.18), rgba(9, 11, 17, 0.42)), url("' + (state.selectedItem.background || state.selectedItem.poster) + '")'
             : 'linear-gradient(180deg, rgba(9, 11, 17, 0.18), rgba(9, 11, 17, 0.42)), #0b0d14';
         renderDetailCast();
+        renderDetailRelated();
     }
 
     updateLibraryButtonUi();
@@ -2637,6 +2878,9 @@ function resumeContinueEntryDirectly(entry) {
     state.selectedType = kind;
     state.selectedImdbApiTitle = null;
     state.selectedCast = [];
+    state.selectedRelatedItems = [];
+    state.detailRelatedLoading = false;
+    state.detailRelatedRequestKey = '';
     state.selectedDetailRequestKey = getImdbApiDetailKey(kind, entry.item.id);
     state.detailMode = 'details';
     state.allSeriesVideos = kind === 'series' ? [video] : [];
@@ -2667,6 +2911,7 @@ function prepareSelection(item, type, options) {
         }
         loadImdbApiSelectionDetails(type, item && item.id);
         loadTrailerForSelection(type, item && item.id);
+        loadRelatedForSelection(type, item && item.id);
     }
 
     captureBrowseReturnState();
@@ -2675,6 +2920,9 @@ function prepareSelection(item, type, options) {
     state.selectedType = type;
     state.selectedImdbApiTitle = null;
     state.selectedCast = [];
+    state.selectedRelatedItems = [];
+    state.detailRelatedLoading = false;
+    state.detailRelatedRequestKey = '';
     state.selectedDetailRequestKey = getImdbApiDetailKey(type, item && item.id);
     state.detailMode = 'details';
     state.allSeriesVideos = [];

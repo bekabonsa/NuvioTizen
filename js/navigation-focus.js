@@ -110,6 +110,9 @@ function buildMainRowContainers() {
         var episodeBrowserRows = getEpisodeBrowserRowCount();
         var episodeRowIndex;
 
+        if (queryAll('#detailRelatedRow .card').filter(isVisibleControl).length) {
+            addonContainers.push(byId('detailRelatedSection'));
+        }
         for (episodeRowIndex = 0; episodeRowIndex < episodeBrowserRows; episodeRowIndex += 1) {
             addonContainers.push(byId('episodeSection'));
         }
@@ -302,6 +305,7 @@ function buildMainRows() {
         var trailerActions = state.detailTrailerActive
             ? queryAll('#detailTrailerControls .action-button').filter(isVisibleControl)
             : [];
+        var relatedCards = queryAll('#detailRelatedRow .card').filter(isVisibleControl);
         var seasons = queryAll('#seasonRail .season-chip').filter(isVisibleControl);
         var episodes = queryAll('#episodeRail .episode-card').filter(isVisibleControl);
         var streams = queryAll('#streamList .stream-card').filter(isVisibleControl);
@@ -310,6 +314,9 @@ function buildMainRows() {
 
         if (detailActions.length || trailerActions.length) {
             addonRows.push(detailActions.concat(trailerActions));
+        }
+        if (relatedCards.length) {
+            addonRows.push(relatedCards);
         }
 
         for (browserRowIndex = 0; browserRowIndex < browserRowCount; browserRowIndex += 1) {
@@ -627,6 +634,7 @@ function scrollElementIntoView(el) {
         parent.classList.contains('nav-list') ||
         parent.classList.contains('season-rail') ||
         parent.classList.contains('episode-rail') ||
+        parent.classList.contains('detail-related-row') ||
         parent.classList.contains('genre-chip-row') ||
         parent.classList.contains('search-keyboard-row') ||
         parent.classList.contains('search-suggestion-list') ||
