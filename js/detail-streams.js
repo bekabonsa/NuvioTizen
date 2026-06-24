@@ -706,7 +706,7 @@ function applyDetailMode() {
     var isSeries = state.selectedType === 'series';
     var showDetails = !hasSelection || !isSeries || state.detailMode === 'details';
     var showEpisodes = hasSelection && isSeries && state.detailMode === 'episodes';
-    var showStreams = hasSelection && (!isSeries || state.detailMode === 'sources');
+    var showStreams = hasSelection && state.detailMode === 'sources';
     var detailHero = byId('detailHeroRow');
     var episodeSection = byId('episodeSection');
     var streamSection = byId('streamSection');
@@ -2010,8 +2010,8 @@ function renderDetailCast() {
         if (member.image) {
             image = document.createElement('img');
             image.decoding = 'async';
-            image.loading = 'eager';
-            image.setAttribute('fetchpriority', 'high');
+            image.loading = 'lazy';
+            image.setAttribute('fetchpriority', 'low');
             image.alt = member.name;
             image.src = member.image;
             image.onerror = function() {
@@ -2659,6 +2659,15 @@ function prepareSelection(item, type, options) {
         ? Math.max(0, options.resumePositionMs)
         : getResumePositionMsFromEntry(resumeEntry);
     var resumeInPlayer = !!(options && options.resumeInPlayer);
+    var detailRequestKey;
+
+    function loadSelectionAuxiliaryDetails() {
+        if (state.selectedDetailRequestKey !== detailRequestKey) {
+            return;
+        }
+        loadImdbApiSelectionDetails(type, item && item.id);
+        loadTrailerForSelection(type, item && item.id);
+    }
 
     captureBrowseReturnState();
     resetDetailTrailerState(true);
@@ -2678,18 +2687,20 @@ function prepareSelection(item, type, options) {
     state.pendingResumePositionMs = state.autoplayPending ? resumePositionMs : 0;
     state.pendingResumeStream = state.autoplayPending && resumeEntry && resumeEntry.stream ? resumeEntry.stream : null;
     state.resumeAutoplayInPlayer = state.autoplayPending && resumeInPlayer;
+    detailRequestKey = state.selectedDetailRequestKey;
     renderAddons();
-    loadImdbApiSelectionDetails(type, item && item.id);
-    loadTrailerForSelection(type, item && item.id);
 
     if (state.resumeAutoplayInPlayer) {
         setResumeLookupPlayerStatus('Finding saved stream...');
+        setTimeout(loadSelectionAuxiliaryDetails, 0);
     } else {
         setView('addons', {
             focusRegion: 'main',
             resetMain: true
         });
         setAddonsMessage('Loading selection details...', null);
+        setTimeout(focusCurrent, 0);
+        setTimeout(loadSelectionAuxiliaryDetails, 120);
     }
 
     if (type === 'series') {
@@ -2762,15 +2773,21 @@ function prepareSelection(item, type, options) {
                 title: state.selectedItem.name || item.name
             };
             renderAddons();
-            setResumeLookupPlayerStatus('Loading movie streams...');
-            loadStreamsForSelection();
+            if (state.autoplayPending) {
+                setResumeLookupPlayerStatus('Loading movie streams...');
+                loadStreamsForSelection();
+                return;
+            }
+            setAddonsMessage('Ready. Press Sources to load streams, or Play to start playback.', null);
         }).catch(function(error) {
             renderAddons();
             if (!state.resumeAutoplayInPlayer) {
                 setAddonsMessage('Movie metadata failed: ' + error.message, 'error');
             }
-            setResumeLookupPlayerStatus('Loading movie streams...');
-            loadStreamsForSelection();
+            if (state.autoplayPending) {
+                setResumeLookupPlayerStatus('Loading movie streams...');
+                loadStreamsForSelection();
+            }
         });
 }
 
