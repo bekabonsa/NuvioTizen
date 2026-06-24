@@ -969,6 +969,18 @@ function getBrowseRequestSkip(option, currentLength) {
     return currentLength;
 }
 
+function getBlockbusterBrowseLimit(append) {
+    return append ? BLOCKBUSTER_LOAD_MORE_SIZE : BLOCKBUSTER_PAGE_SIZE;
+}
+
+function getRatingCombinedBrowseLimit(combined, append) {
+    if (isBlockbusterCatalogOption(combined && combined.baseOption)) {
+        return getBlockbusterBrowseLimit(append);
+    }
+
+    return append ? BROWSE_LOAD_MORE_SIZE : BROWSE_PAGE_SIZE;
+}
+
 function supportsRemoteBrowsePaging(option) {
     if (isBlockbusterCatalogOption(option)) {
         return true;
@@ -1216,7 +1228,7 @@ function buildBlockbusterCatalogApiUrl(type, skip, limit) {
         params.push('rating=' + encodeURIComponent(String(ratingOption.label)));
     }
     params.push('skip=' + encodeURIComponent(String(Math.max(0, skip || 0))));
-    params.push('limit=' + encodeURIComponent(String(Math.max(1, limit || BROWSE_PAGE_SIZE))));
+    params.push('limit=' + encodeURIComponent(String(Math.max(1, limit || getBlockbusterBrowseLimit(false)))));
 
     return baseUrl + '/catalog/movie?' + params.join('&');
 }
@@ -1364,11 +1376,12 @@ function enrichBrowseItemsWithArtwork(type, items) {
     }));
 }
 
-function fetchRatingCombinedBrowse(type, combined, currentItems, append) {
-    var targetLength = (append ? currentItems.length : 0) + BROWSE_PAGE_SIZE;
+function fetchRatingCombinedBrowse(type, combined, currentItems, append, startSkip) {
+    var requestPageLimit = getRatingCombinedBrowseLimit(combined, append);
+    var targetLength = (append ? currentItems.length : 0) + requestPageLimit;
     var nextItems = append ? (currentItems || []).slice() : [];
     var pageIndex = 0;
-    var nextSkip = 0;
+    var nextSkip = append ? Math.max(0, Number(startSkip || 0) || 0) : 0;
 
     function result(canLoadMore) {
         return {
@@ -1386,7 +1399,7 @@ function fetchRatingCombinedBrowse(type, combined, currentItems, append) {
             return Promise.resolve(result(false));
         }
 
-        var requestLimit = Math.min(CINEMETA_CATALOG_PAGE_SIZE, Math.max(BROWSE_ROW_SIZE, targetLength - nextItems.length));
+        var requestLimit = Math.min(requestPageLimit, Math.max(BROWSE_ROW_SIZE, targetLength - nextItems.length));
 
         return requestImdbCatalogApiPayload(type, combined, nextSkip, requestLimit).then(function(payload) {
             var rawItems = uniqueCatalogItems(payload && Array.isArray(payload.metas) ? payload.metas : []);
@@ -1577,17 +1590,24 @@ function prefetchBrowseCatalogs(type) {
     if (!option || !getBrowseCanLoadMore(type) || getBrowseLoadingMore(type)) {
         return;
     }
-    if (isBlockbusterCatalogOption(option)) {
-        return;
-    }
-
     if (ratingCombined) {
-        requestImdbCatalogApiPayload(type, ratingCombined, 0, BROWSE_PAGE_SIZE).catch(function() {});
+        var ratingLimit = getRatingCombinedBrowseLimit(ratingCombined, true);
+        var ratingSkip = Math.max(0, Number(getBrowseSkip(type) || currentLength || 0) || 0);
+
         requestImdbCatalogApiPayload(
             type,
             ratingCombined,
-            Math.max(BROWSE_PAGE_SIZE, Math.ceil(currentLength / BROWSE_PAGE_SIZE) * BROWSE_PAGE_SIZE),
-            BROWSE_PAGE_SIZE
+            ratingSkip,
+            ratingLimit
+        ).catch(function() {});
+        return;
+    }
+
+    if (isBlockbusterCatalogOption(option)) {
+        requestBrowseCatalogPayload(
+            option,
+            getBrowseRequestSkip(option, getBrowseSkip(type) || currentLength),
+            { limit: getBlockbusterBrowseLimit(true) }
         ).catch(function() {});
         return;
     }
@@ -1625,7 +1645,7 @@ function prefetchBrowseCatalogs(type) {
 
     if (supportsRemoteBrowsePaging(option)) {
         requestBrowseCatalogPayload(option, getBrowseRequestSkip(option, currentLength), isBlockbusterCatalogOption(option) ? {
-            limit: BROWSE_PAGE_SIZE
+            limit: getBlockbusterBrowseLimit(true)
         } : null).catch(function() {});
     }
 }

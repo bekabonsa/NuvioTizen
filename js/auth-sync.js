@@ -1733,7 +1733,9 @@ function fetchBrowseCatalog(type, append) {
     var requestSkip = useLocalPaging ? 0 : getBrowseRequestSkip(option, storedSkip || visibleSkip);
     var genreFilter = getBrowseGenreFilterLabel(option);
     var ratingFilter = getSelectedRatingBrowseOption(type);
-    var requestLimit = genreFilter && isCinemetaTopCatalog(option)
+    var requestLimit = isBlockbusterCatalogOption(option)
+        ? getBlockbusterBrowseLimit(append)
+        : genreFilter && isCinemetaTopCatalog(option)
         ? CINEMETA_CATALOG_PAGE_SIZE
         : ratingFilter
         ? CINEMETA_CATALOG_PAGE_SIZE
@@ -1769,7 +1771,7 @@ function fetchBrowseCatalog(type, append) {
 
     if (ratingCombined) {
         updateConnectionStatus('Loading ' + type + ' browse...', false, false);
-        return fetchRatingCombinedBrowse(type, ratingCombined, currentItems, append).then(function(result) {
+        return fetchRatingCombinedBrowse(type, ratingCombined, currentItems, append, storedSkip).then(function(result) {
             if (!isBrowseRequestCurrent(type, requestId)) {
                 return;
             }

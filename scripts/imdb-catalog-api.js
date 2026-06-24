@@ -20,7 +20,7 @@ const imdbApiBaseUrl = (process.env.IMDB_API_BASE_URL || 'https://api.imdbapi.de
 const imdbApiExcludedCountryCodes = parseCsvSet(process.env.IMDB_API_EXCLUDED_COUNTRY_CODES || 'IN');
 const imdbApiBatchConcurrency = Math.max(1, Number(process.env.IMDB_API_BATCH_CONCURRENCY || 1) || 1);
 const enrichArtwork = process.env.IMDB_ENRICH_ARTWORK === '1';
-const maxResults = Number(process.env.IMDB_MAX_RESULTS || 50);
+const maxResults = Number(process.env.IMDB_MAX_RESULTS || 120);
 const tmdbApiBaseUrl = (process.env.TMDB_API_BASE_URL || 'https://api.themoviedb.org/3').replace(/\/+$/, '');
 const tmdbImageBaseUrl = (process.env.TMDB_IMAGE_BASE_URL || 'https://image.tmdb.org/t/p').replace(/\/+$/, '');
 const tmdbReadAccessToken = process.env.TMDB_READ_ACCESS_TOKEN || process.env.TMDB_V4_READ_ACCESS_TOKEN || '';

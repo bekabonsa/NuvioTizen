@@ -296,6 +296,10 @@ function createCard(item, kind) {
     }
     card.type = 'button';
     card.setAttribute('tabindex', '-1');
+    if (item && item.id) {
+        card.setAttribute('data-item-id', String(item.id));
+        card.setAttribute('data-item-kind', kind || item.__kind || '');
+    }
 
     poster.className = 'poster';
     function showEmptyPoster() {
@@ -378,6 +382,11 @@ function createCard(item, kind) {
                 return;
             }
             prepareSelection(item, kind);
+        });
+        card.addEventListener('focus', function() {
+            if (typeof scheduleDetailTrailerPrefetch === 'function') {
+                scheduleDetailTrailerPrefetch(kind || item.__kind, item && item.id);
+            }
         });
     }
 

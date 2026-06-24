@@ -1269,6 +1269,40 @@ function requestDetailTrailer(type, id) {
     return detailTrailerPending[key];
 }
 
+var detailTrailerPrefetchTimer = null;
+var detailTrailerPrefetchKey = '';
+
+function prefetchDetailTrailer(type, id) {
+    if (!id) {
+        return;
+    }
+
+    requestDetailTrailer(type, id).catch(function() {});
+}
+
+function scheduleDetailTrailerPrefetch(type, id) {
+    var key = getDetailTrailerKey(type, id);
+
+    if (!id || !key) {
+        return;
+    }
+    if (Object.prototype.hasOwnProperty.call(detailTrailerCache, key)) {
+        return;
+    }
+
+    detailTrailerPrefetchKey = key;
+    if (detailTrailerPrefetchTimer) {
+        clearTimeout(detailTrailerPrefetchTimer);
+    }
+    detailTrailerPrefetchTimer = setTimeout(function() {
+        detailTrailerPrefetchTimer = null;
+        if (detailTrailerPrefetchKey !== key) {
+            return;
+        }
+        prefetchDetailTrailer(type, id);
+    }, 240);
+}
+
 function getYouTubeKeyFromTrailer(trailer) {
     var match;
     var value = trailer && (trailer.key || trailer.url || trailer.webUrl) || '';
